@@ -7,6 +7,7 @@ import net.ccbluex.liquidbounce.features.module.ModuleCategories
 import net.ccbluex.liquidbounce.features.module.ModuleManager
 import net.minecraft.client.gui.GuiGraphics
 import net.minecraft.client.gui.screens.Screen
+import net.minecraft.client.input.CharacterEvent
 import net.minecraft.client.input.KeyEvent
 import net.minecraft.client.input.MouseButtonEvent
 import net.minecraft.network.chat.Component
@@ -238,28 +239,8 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
     }
 
     // support IME / Chinese input
-    override fun charTyped(char: Char, modifiers: Int): Boolean {
-        if (searchFocus) { search += char; return true }
-        return false
-    }
-
-    override fun onClose() { minecraft?.setScreen(null); anim = 0f }
-
-    private fun getMods(): List<ClientModule> {
-        val catObj = cats.getOrElse(cat) { ModuleCategories.COMBAT }
-        return ModuleManager.getModules()
-            .filter { it.category == catObj && it.name != "ClickGUI" }
-            .filter { search.isEmpty() || it.name.contains(search, ignoreCase = true) }
-    }
-}
-W.GLFW_KEY_BACKSPACE -> { if (search.isNotEmpty()) search = search.dropLast(1); return true }
-                GLFW.GLFW_KEY_SPACE -> { search += " "; return true }
-                else -> {
-                    val n = GLFW.glfwGetKeyName(input.key, 0)
-                    if (n != null && n.length == 1) { search += n; return true }
-                }
-            }
-        }
+    override fun charTyped(characterEvent: CharacterEvent): Boolean {
+        if (searchFocus) { search += characterEvent.codePoint.toChar(); return true }
         return false
     }
 
