@@ -240,7 +240,7 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
 
     // support IME / Chinese input
     override fun charTyped(characterEvent: CharacterEvent): Boolean {
-        if (searchFocus) { search += characterEvent.codePoint.toChar(); return true }
+        if (searchFocus) { search += characterEvent.character; return true }
         return false
     }
 
