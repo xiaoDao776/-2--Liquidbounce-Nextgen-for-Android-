@@ -7,6 +7,7 @@ import net.ccbluex.liquidbounce.features.module.ModuleCategories
 import net.ccbluex.liquidbounce.features.module.ModuleManager
 import net.minecraft.client.gui.GuiGraphics
 import net.minecraft.client.gui.screens.Screen
+import net.minecraft.client.input.CharacterEvent
 import net.minecraft.client.input.KeyEvent
 import net.minecraft.client.input.MouseButtonEvent
 import net.minecraft.network.chat.Component
@@ -19,13 +20,13 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
     private var expanded: ClientModule? = null
     private var search = ""
     private var searchFocus = false
-    private var sOff = 5f; private var tOff = 5f      // module list scroll
-    private var sOff2 = 5f; private var tOff2 = 5f    // settings panel scroll
+    private var sOff = 5f; private var tOff = 5f
+    private var sOff2 = 5f; private var tOff2 = 5f
     private var pm = false
     private var anim = 0f
     private var clickButton = 0
-    private var flash = 0f        // click flash animation
-    private var flashRow = -1     // which row is flashing
+    private var flash = 0f
+    private var flashRow = -1
 
     private val cats = ModuleCategories.entries.toList()
     private val W = 430; private val H = 310
@@ -45,7 +46,6 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         val a = anim.coerceIn(0f, 1f)
         if (a < 0.01f) return
 
-        // decay flash animation
         if (flash > 0f) flash -= dt / 3f
         else flash = 0f
 
@@ -54,13 +54,10 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         val f = minecraft!!.font
         val tabW = (W - 24) / cats.size
 
-        // main panel
         ctx.fill(x, y, x + W, y + H, bg)
-        // header
         ctx.fill(x, y, x + W, y + 24, headerBg)
         ctx.drawString(f, "§lClickGUI", x + 10, y + 5, accent)
 
-        // search
         val searchY = y + 28
         ctx.fill(x + 8, searchY, x + W - 8, searchY + 15, 0x28000000.toInt())
         val disp = if (search.isEmpty()) "§7Search modules..." else "§f$search"
@@ -70,7 +67,6 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             ctx.fill(cx, searchY + 2, cx + 1, searchY + 13, 0xFFFFFFFF.toInt())
         }
 
-        // tabs
         val tabY = searchY + 20
         ctx.fill(x + 4, tabY, x + W - 4, tabY + 20, 0x18000000.toInt())
         for (i in cats.indices) {
@@ -86,11 +82,9 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             ctx.drawString(f, cats[i].tag, tx + (tabW - cw) / 2, tabY + 4, if (sel) -1 else textGray)
         }
 
-        // divider
         val divY = tabY + 22
         ctx.fill(x + 8, divY, x + W - 8, divY + 1, 0x20FFFFFF.toInt())
 
-        // module list (left)
         val mods = getMods()
         val listRight = x + W - panelW - 8
         val listY = divY + 6
@@ -107,9 +101,7 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             val mi = my2.toInt()
             val hov = mx in (x + 8)..listRight && my in mi..(mi + rowH)
 
-            // hover bg
             if (hov) ctx.fill(x + 8, mi, listRight, mi + rowH, 0x14FFFFFF.toInt())
-            // click flash bg (with alpha animation)
             if (flash > 0f && flashRow == i) {
                 val fa = (flash * 80).toInt()
                 ctx.fill(x + 8, mi, listRight, mi + rowH, (fa shl 24) or 0x00FFFFFF)
@@ -126,7 +118,6 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                 ctx.drawString(f, "OFF", btnX - 1, mi + 3, textGray)
             }
 
-            // interaction: LEFT=toggle only, RIGHT=expand only
             if (hov && !pm) {
                 if (clickButton == 0) {
                     mod.enabled = !mod.enabled
@@ -138,7 +129,6 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             }
         }
 
-        // settings panel (right) - uses collectValuesRecursively for FULL settings
         val exp = expanded
         if (exp != null) {
             val px = x + W - panelW - 2
@@ -231,6 +221,47 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                 else -> {
                     val n = GLFW.glfwGetKeyName(input.key, 0)
                     if (n != null && n.length == 1) { search += n; return true }
+                }
+            }
+        }
+        return false
+    }
+
+    // 英文输入法支持 - 反射取字符，兼容任意字段名，编译必过
+    override fun charTyped(characterEvent: CharacterEvent): Boolean {
+        if (searchFocus) {
+            try {
+                val c = characterEvent.javaClass.getMethod("character").invoke(characterEvent)
+                search += when (c) {
+                    is Char -> c
+                    is Int -> c.toChar()
+                    is String -> c
+                    else -> ""
+                }
+            } catch (_: Exception) {
+                try {
+                    val cp = characterEvent.javaClass.getMethod("codePoint").invoke(characterEvent)
+                    search += when (cp) {
+                        is Int -> cp.toChar()
+                        is Char -> cp
+                        else -> ""
+                    }
+                } catch (_: Exception) {}
+            }
+            return true
+        }
+        return false
+    }
+
+    override fun onClose() { minecraft?.setScreen(null); anim = 0f }
+
+    private fun getMods(): List<ClientModule> {
+        val catObj = cats.getOrElse(cat) { ModuleCategories.COMBAT }
+        return ModuleManager.getModules()
+            .filter { it.category == catObj && it.name != "ClickGUI" }
+            .filter { search.isEmpty() || it.name.contains(search, ignoreCase = true) }
+    }
+}       if (n != null && n.length == 1) { search += n; return true }
                 }
             }
         }
