@@ -27,6 +27,7 @@ import net.ccbluex.liquidbounce.event.events.ClickGuiValueChangeEvent
 import net.ccbluex.liquidbounce.event.events.DisconnectEvent
 import net.ccbluex.liquidbounce.event.events.GameTickEvent
 import net.ccbluex.liquidbounce.event.events.WorldChangeEvent
+import net.ccbluex.liquidbounce.event.events.KeyboardKeyEvent
 import net.ccbluex.liquidbounce.event.handler
 import net.ccbluex.liquidbounce.event.sequenceHandler
 import net.ccbluex.liquidbounce.event.waitSeconds
@@ -106,9 +107,14 @@ object ModuleClickGui :
         tree(ScreenManager.browserSettings)
     }
 
+    private val keyHandler = handler<KeyboardKeyEvent> { event ->
+        if (event.action == 1 && (event.keyCode == GLFW.GLFW_KEY_RIGHT_SHIFT || event.keyCode == 54) && mc.screen == null) {
+            mc.setScreen(ClickGuiScreen())
+        }
+    }
     override fun onEnabled() {
-        if (!LiquidBounce.isInitialized || !inGame) return
-        mc.execute { mc.setScreen(ClickGuiScreen()) }
+        if (!LiquidBounce.isInitialized) return
+        mc.setScreen(ClickGuiScreen())
         super.onEnabled()
     }
 
@@ -150,38 +156,6 @@ object ModuleClickGui :
         } else if (standaloneScreen != null) {
             standaloneScreen?.close()
             standaloneScreen = null
-        }
-
-        return false
-    }
-
-    fun sync() {
-        if (!LiquidBounce.isInitialized) {
-            return
-        }
-
-        standaloneScreen?.sync()
-    }
-
-    fun invalidate() {
-        val standaloneScreen = standaloneScreen ?: return
-        val wasOpen = mc.screen == standaloneScreen
-
-        // Close and invalidate old cache
-        if (wasOpen) {
-            mc.setScreen(null)
-        }
-        standaloneScreen.close()
-        this.standaloneScreen = null
-        
-        // Only bother updating now if it was open before.
-        if (wasOpen) {
-            updateStandaloneScreen()
-            mc.setScreen(this.standaloneScreen ?: CustomSharedMinecraftScreen(CustomScreenType.CLICK_GUI))
-        }
-    }
-
-}
         }
 
         return false
