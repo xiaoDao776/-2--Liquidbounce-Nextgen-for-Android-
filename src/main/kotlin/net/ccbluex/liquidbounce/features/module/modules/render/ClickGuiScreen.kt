@@ -127,7 +127,7 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             }
         }
 
-        // 右侧设置项绘制
+        // 右侧设置子菜单绘制（紧凑布局修复）
         val exp = expanded
         if (exp != null) {
             val px = x + W - panelW - 2
@@ -138,33 +138,48 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             val setList = exp.collectValuesRecursively()
             val setY = py + 14
             val setH = H - (setY - y) - 6
-            tOff2 = max(5f, tOff2.coerceAtMost(max(0f, setList.size * 18f - setH + 5f)))
+
+            // 计算总内容高度（数值类型需要 18px，其他需要 14px）
+            var totalContentH = 0f
+            for (v in setList) {
+                val valObj = v.get()
+                totalContentH += if (valObj is Number) 18f else 14f
+            }
+
+            tOff2 = max(5f, tOff2.coerceAtMost(max(0f, totalContentH - setH + 5f)))
             sOff2 += (tOff2 - sOff2) * 0.3f
 
-            var idx = 0
+            var curY = setY - sOff2
             for (v in setList) {
-                val sy2 = setY + idx * 18 - sOff2
-                if (sy2 < setY - 18 || sy2 > setY + setH) { idx++; continue }
-                val mi2 = sy2.toInt()
-                try {
-                    when (val iv = v.get()) {
-                        is Boolean -> {
-                            ctx.drawString(f, "${v.name}: ${if (iv) "§aON" else "§cOFF"}", px + 8, mi2 + 2, -1)
+                val valObj = v.get()
+                val itemH = if (valObj is Number) 18f else 14f
+
+                if (curY >= setY - itemH && curY <= setY + setH) {
+                    val mi2 = curY.toInt()
+                    try {
+                        when (valObj) {
+                            is Boolean -> {
+                                ctx.drawString(f, "${v.name}: ${if (valObj) "§aON" else "§cOFF"}", px + 8, mi2 + 2, -1)
+                            }
+                            is Number -> {
+                                val fv = valObj.toFloat()
+                                val mn = if (v is RangedValue<*>) (v.range.start as? Number)?.toFloat() ?: 0f else 0f
+                                val mxr = if (v is RangedValue<*>) (v.range.endInclusive as? Number)?.toFloat() ?: 100f else 100f
+                                val bw = panelW - 16; val bh = 4
+                                val bx = px + 8; val by = mi2 + 11
+                                ctx.fill(bx, by, bx + bw, by + bh, 0x30000000.toInt())
+                                val r = ((fv - mn) / (mxr - mn)).coerceIn(0f, 1f)
+                                ctx.fill(bx, by, (bx + bw * r).toInt(), by + bh, accent)
+                                ctx.drawString(f, "${v.name}: ${"%.1f".format(fv)}", px + 8, mi2, -1)
+                            }
+                            else -> {
+                                // 兜底处理所有其他设置类型（Enum/String/List等）
+                                ctx.drawString(f, "${v.name}: §7${valObj?.toString() ?: ""}", px + 8, mi2 + 2, -1)
+                            }
                         }
-                        is Number -> {
-                            val fv = iv.toFloat()
-                            val mn = if (v is RangedValue<*>) (v.range.start as? Number)?.toFloat() ?: 0f else 0f
-                            val mxr = if (v is RangedValue<*>) (v.range.endInclusive as? Number)?.toFloat() ?: 100f else 100f
-                            val bw = panelW - 16; val bh = 5
-                            val bx = px + 8; val by = mi2 + 11
-                            ctx.fill(bx, by, bx + bw, by + bh, 0x30000000.toInt())
-                            val r = ((fv - mn) / (mxr - mn)).coerceIn(0f, 1f)
-                            ctx.fill(bx, by, (bx + bw * r).toInt(), by + bh, accent)
-                            ctx.drawString(f, "${v.name}: ${"%.1f".format(fv)}", px + 8, mi2, -1)
-                        }
-                    }
-                } catch (_: Exception) {}
-                idx++
+                    } catch (_: Exception) {}
+                }
+                curY += itemH
             }
         }
     }
@@ -178,14 +193,14 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         val y = (minecraft!!.window.guiScaledHeight - H) / 2
         val tabW = (W - 24) / cats.size
 
-        // 点击搜索框
+        // 1. 搜索框点击
         if (mx in (x + 8)..(x + W - 8) && my in (y + 28)..(y + 43)) {
             searchFocus = true
             return true
         }
         searchFocus = false
 
-        // 点击 Tab
+        // 2. 分类 Tab 点击
         val tabY = y + 48
         if (btn == 0 && my in tabY..(tabY + 20)) {
             for (i in cats.indices) {
@@ -205,7 +220,7 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         val listRight = x + W - panelW - 8
         val rowH = 18
 
-        // 点击模块
+        // 3. 模块列表点击
         if (mx in (x + 8)..listRight && my in listY..(listY + listH)) {
             val mods = getMods()
             val clickIdx = ((my - listY + sOff) / rowH).toInt()
@@ -223,7 +238,7 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             }
         }
 
-        // 点击右侧设置
+        // 4. 右侧设置项动态点击处理
         val exp = expanded
         if (exp != null && btn == 0) {
             val px = x + W - panelW - 2
@@ -233,34 +248,39 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
 
             if (mx in px..(px + panelW) && my in setY..(setY + setH)) {
                 val setList = exp.collectValuesRecursively()
-                val clickIdx = ((my - setY + sOff2) / 18f).toInt()
+                var curY = setY - sOff2
 
-                if (clickIdx in setList.indices) {
-                    val v = setList[clickIdx]
-                    try {
-                        when (val iv = v.get()) {
-                            is Boolean -> {
-                                @Suppress("UNCHECKED_CAST")
-                                (v as Value<Boolean>).set(!iv)
-                            }
-                            is Number -> {
-                                val mn = if (v is RangedValue<*>) (v.range.start as? Number)?.toFloat() ?: 0f else 0f
-                                val mxr = if (v is RangedValue<*>) (v.range.endInclusive as? Number)?.toFloat() ?: 100f else 100f
-                                val bw = panelW - 16
-                                val bx = px + 8
-                                val nr = ((mx - bx).toFloat() / bw).coerceIn(0f, 1f)
-                                val nv = mn + nr * (mxr - mn)
-                                if (iv is Float) {
+                for (v in setList) {
+                    val valObj = v.get()
+                    val itemH = if (valObj is Number) 18f else 14f
+
+                    if (my >= curY && my < curY + itemH) {
+                        try {
+                            when (valObj) {
+                                is Boolean -> {
                                     @Suppress("UNCHECKED_CAST")
-                                    (v as Value<Float>).set(nv)
-                                } else if (iv is Int) {
-                                    @Suppress("UNCHECKED_CAST")
-                                    (v as Value<Int>).set(nv.toInt())
+                                    (v as Value<Boolean>).set(!valObj)
+                                }
+                                is Number -> {
+                                    val mn = if (v is RangedValue<*>) (v.range.start as? Number)?.toFloat() ?: 0f else 0f
+                                    val mxr = if (v is RangedValue<*>) (v.range.endInclusive as? Number)?.toFloat() ?: 100f else 100f
+                                    val bw = panelW - 16
+                                    val bx = px + 8
+                                    val nr = ((mx - bx).toFloat() / bw).coerceIn(0f, 1f)
+                                    val nv = mn + nr * (mxr - mn)
+                                    if (valObj is Float) {
+                                        @Suppress("UNCHECKED_CAST")
+                                        (v as Value<Float>).set(nv)
+                                    } else if (valObj is Int) {
+                                        @Suppress("UNCHECKED_CAST")
+                                        (v as Value<Int>).set(nv.toInt())
+                                    }
                                 }
                             }
-                        }
-                    } catch (_: Exception) {}
-                    return true
+                        } catch (_: Exception) {}
+                        return true
+                    }
+                    curY += itemH
                 }
             }
         }
@@ -309,7 +329,6 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
     override fun charTyped(characterEvent: CharacterEvent): Boolean {
         if (searchFocus) {
             try {
-                // 通过反射兼容不同映射表的 character/codepoint 访问
                 val obj: Any = characterEvent
                 val cls = obj.javaClass
                 var cp: Int? = null
