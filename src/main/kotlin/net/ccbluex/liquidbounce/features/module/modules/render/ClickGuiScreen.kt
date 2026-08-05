@@ -43,22 +43,20 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
     override fun shouldCloseOnEsc() = true
 
     /**
-     * 绘制圆角矩形核心方法（包含四个角的弧度平滑填充）
+     * 绘制圆角矩形核心方法
      */
     private fun fillRoundedRect(ctx: GuiGraphics, x1: Float, y1: Float, x2: Float, y2: Float, radius: Float, color: Int) {
         val r = radius.coerceAtMost((x2 - x1) / 2f).coerceAtMost((y2 - y1) / 2f)
         
-        // 1. 绘制中间的主体交叉十字直角矩形
         ctx.fill((x1 + r).toInt(), y1.toInt(), (x2 - r).toInt(), y2.toInt(), color)
         ctx.fill(x1.toInt(), (y1 + r).toInt(), (x1 + r).toInt(), (y2 - r).toInt(), color)
         ctx.fill((x2 - r).toInt(), (y1 + r).toInt(), x2.toInt(), (y2 - r).toInt(), color)
 
-        // 2. 绘制 4 个圆角的扇形补全
         val corners = arrayOf(
-            floatArrayOf(x1 + r, y1 + r, 180f, 270f), // 左上
-            floatArrayOf(x2 - r, y1 + r, 270f, 360f), // 右上
-            floatArrayOf(x2 - r, y2 - r, 0f, 90f),    // 右下
-            floatArrayOf(x1 + r, y2 - r, 90f, 180f)   // 左下
+            floatArrayOf(x1 + r, y1 + r, 180f, 270f),
+            floatArrayOf(x2 - r, y1 + r, 270f, 360f),
+            floatArrayOf(x2 - r, y2 - r, 0f, 90f),
+            floatArrayOf(x1 + r, y2 - r, 90f, 180f)
         )
 
         for (c in corners) {
@@ -94,6 +92,45 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         return "$str..."
     }
 
+    /**
+     * 解析按键绑定/选框展示文本，剔除 key.keyboard. 格式杂质
+     */
+    private fun formatDisplayValue(valObj: Any?): String {
+        if (valObj == null) return "None"
+        val rawStr = valObj.toString()
+
+        // 优先利用反射提取 Bind/Keybind 内的实际按键名
+        try {
+            val cls = valObj.javaClass
+            val keyField = cls.declaredFields.find { 
+                it.name.equals("boundKey", true) || it.name.equals("key", true) || it.name.equals("name", true) 
+            }
+            if (keyField != null) {
+                keyField.isAccessible = true
+                val innerKey = keyField.get(valObj)
+                if (innerKey != null) {
+                    val keyStr = innerKey.toString()
+                        .replace("key.keyboard.", "", ignoreCase = true)
+                        .replace("key.", "", ignoreCase = true)
+                        .uppercase()
+                    if (keyStr.isNotEmpty()) return keyStr
+                }
+            }
+        } catch (_: Exception) {}
+
+        // 通用格式化清洗
+        var cleaned = rawStr
+            .replace("key.keyboard.", "", ignoreCase = true)
+            .replace("key.", "", ignoreCase = true)
+            .replace("InputBind", "", ignoreCase = true)
+
+        if (cleaned.startsWith("(") && cleaned.endsWith(")")) {
+            cleaned = cleaned.substring(1, cleaned.length - 1)
+        }
+        
+        return if (cleaned.isBlank()) "NONE" else cleaned.take(20).uppercase()
+    }
+
     private fun isSliderValue(v: Value<*>): Boolean {
         val obj = v.get() ?: return false
         return obj is Number || obj is ClosedRange<*> || v is RangedValue<*>
@@ -111,7 +148,6 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
 
         val curObj = v.get()
         
-        // 修复：使用 javaClass.enumConstants 获取枚举常数数组，彻底解决编译器类型错误
         if (curObj is Enum<*>) {
             val constants = curObj.javaClass.enumConstants
             if (constants != null && constants.isNotEmpty()) {
@@ -206,7 +242,7 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         val divY = tabY + 22
         ctx.fill(x.toInt() + 8, divY.toInt(), (x + W - 8).toInt(), (divY + 1).toInt(), 0x20FFFFFF.toInt())
 
-        // 模块列表绘制
+        // 左侧模块列表
         val mods = getMods()
         val listRight = x + W - panelW - 8
         val listY = divY + 6
@@ -233,7 +269,6 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             val nameText = trimText(f, (if (isExpandedMod) "§n" else "") + mod.name, (listRight - x - 45).toInt())
             ctx.drawString(f, nameText, x.toInt() + 14, mi + 3, if (mod.enabled) accent else textGray)
 
-            // Switch 开关
             val switchW = 24
             val switchH = 12
             val btnX = listRight.toInt() - switchW - 4
@@ -248,7 +283,7 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             }
         }
 
-        // 右侧设置子菜单绘制
+        // 右侧设置面板
         val exp = expanded
         if (exp != null) {
             val px = x + W - panelW - 2
@@ -268,6 +303,9 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
 
             tOff2 = max(5f, tOff2.coerceAtMost(max(0f, totalContentH - setH + 5f)))
             sOff2 += (tOff2 - sOff2) * 0.3f
+
+            // 开启坐标裁切限制，避免滑动时文本溢出 ClickGUI 底部
+            ctx.enableScissor(px.toInt(), setY.toInt(), (x + W - 2).toInt(), (y + H - 2).toInt())
 
             var curY = setY - sOff2
             for (v in setList) {
@@ -307,7 +345,8 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                                 ctx.drawString(f, text, px.toInt() + 8, mi2, -1)
                             }
                             else -> {
-                                val dispStr = valObj?.toString()?.replace("InputBind", "")?.take(20) ?: "None"
+                                // 使用格式化清洗函数，展示简洁干净的模式/按键名
+                                val dispStr = formatDisplayValue(valObj)
                                 val text = trimText(f, "${v.name}: §b$dispStr", maxTextW)
                                 ctx.drawString(f, text, px.toInt() + 8, mi2 + 2, -1)
                             }
@@ -316,6 +355,9 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                 }
                 curY += itemH
             }
+
+            // 关闭裁切限制
+            ctx.disableScissor()
         }
     }
 
@@ -479,7 +521,7 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                 var cp: Int? = null
 
                 for (m in cls.methods) {
-                    if (m.parameterCount == 0 && (m.name.equals("codepoint", true) || m.name.equals("codePoint", true) || m.name.equals("codePoint", true) || m.name.equals("character", true))) {
+                    if (m.parameterCount == 0 && (m.name.equals("codepoint", true) || m.name.equals("codePoint", true) || m.name.equals("character", true))) {
                         val res = m.invoke(obj)
                         if (res is Int) cp = res
                         else if (res is Char) cp = res.code
@@ -513,11 +555,10 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         anim = 0f
     }
 
-        private fun getMods(): List<ClientModule> {
+    private fun getMods(): List<ClientModule> {
         val catObj = cats.getOrElse(cat) { ModuleCategories.COMBAT }
         return ModuleManager.getModules()
             .filter { it.category == catObj && it.name != "ClickGUI" }
             .filter { search.isEmpty() || it.name.contains(search, ignoreCase = true) }
     }
-} // 确保最底部有这个 closure 括号闭合 ClickGuiScreen 类
-
+}
