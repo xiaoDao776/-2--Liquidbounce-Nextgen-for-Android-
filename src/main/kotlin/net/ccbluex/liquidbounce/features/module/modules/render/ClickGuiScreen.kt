@@ -479,7 +479,7 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                 var cp: Int? = null
 
                 for (m in cls.methods) {
-                    if (m.parameterCount == 0 && (m.name.equals("codepoint", true) || m.name.equals("codePoint", true) || m.nae.equals("codePoint", true) || m.name.equals("character", true))) {
+                    if (m.parameterCount == 0 && (m.name.equals("codepoint", true) || m.name.equals("codePoint", true) || m.name.equals("codePoint", true) || m.name.equals("character", true))) {
                         val res = m.invoke(obj)
                         if (res is Int) cp = res
                         else if (res is Char) cp = res.code
@@ -513,9 +513,11 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         anim = 0f
     }
 
-    private fun getMods(): List<ClientModule> {
+        private fun getMods(): List<ClientModule> {
         val catObj = cats.getOrElse(cat) { ModuleCategories.COMBAT }
         return ModuleManager.getModules()
             .filter { it.category == catObj && it.name != "ClickGUI" }
-            .filter { search.isEmpty() || it.name.contains(search, ignoreCase = true) } // 已将 it.nae 修正为 it.name
+            .filter { search.isEmpty() || it.name.contains(search, ignoreCase = true) }
     }
+} // 确保最底部有这个 closure 括号闭合 ClickGuiScreen 类
+
