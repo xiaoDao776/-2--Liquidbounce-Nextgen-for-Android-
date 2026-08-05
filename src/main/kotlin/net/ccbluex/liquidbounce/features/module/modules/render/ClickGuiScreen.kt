@@ -90,20 +90,15 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         return "$str..."
     }
 
-    /**
-     * 核心解包逻辑：穿透 LiquidBounce 的 Value 包装，提取真实的数据对象
-     */
     private fun getActualValue(v: Value<*>): Any? {
         var obj: Any? = v.get() ?: return null
         
-        // 深度穿透嵌套的 Value 对象
         var depth = 0
         while (obj is Value<*> && depth < 5) {
             obj = obj.get()
             depth++
         }
 
-        // 处理集合或数组容器（如 ListValue）
         if (obj is Collection<*>) {
             val first = obj.firstOrNull() ?: return "EMPTY"
             if (first is Value<*>) return getActualValue(first)
@@ -118,13 +113,9 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         return obj
     }
 
-    /**
-     * 格式化输出显示文本，彻底消除 Value[name=... 等字符串
-     */
     private fun formatDisplayValue(v: Value<*>): String {
         val actual = getActualValue(v) ?: return "NONE"
 
-        // 尝试提取 KeyBind 属性
         try {
             val cls = actual.javaClass
             val keyField = cls.declaredFields.find { 
@@ -145,7 +136,6 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
 
         var str = actual.toString()
 
-        // 正则清除 Value(...) 遗留特征
         if (str.contains("Value(") || str.contains("name=")) {
             val match = Regex("""name=([^,\s\)]+)""").find(str)
             if (match != null) {
@@ -192,13 +182,9 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         return 0xFFFFFFFF.toInt()
     }
 
-    /**
-     * 通用子项点击切换逻辑，支持 List/Enum/ModeValue 切换
-     */
     private fun toggleNextValue(v: Value<*>) {
         val cls = v.javaClass
 
-        // 1. 尝试直接执行内置的 next() / toggle()
         try {
             val nextMethod = cls.methods.find { 
                 (it.name == "next" || it.name == "toggle" || it.name == "setNext") && it.parameterCount == 0 
@@ -211,7 +197,6 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
 
         val actual = getActualValue(v)
 
-        // 2. Enum 枚举轮播切换
         if (actual is Enum<*>) {
             val constants = actual.javaClass.enumConstants
             if (constants != null && constants.isNotEmpty()) {
@@ -225,7 +210,6 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             }
         }
 
-        // 3. 寻找类中的 values/modes/choices 字段（适用于 ModeValue / ListValue）
         try {
             val choicesField = cls.declaredFields.find { 
                 it.name.equals("values", true) || it.name.equals("choices", true) || 
@@ -256,7 +240,6 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             }
         } catch (_: Exception) {}
 
-        // 4. 布尔值切换
         if (actual is Boolean) {
             try {
                 @Suppress("UNCHECKED_CAST")
@@ -354,18 +337,16 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             }
         }
 
-        // 右侧设置面板逻辑（修复遮挡与解包渲染）
-        val exp = expanded
-        if (exp != null) {
+        val curExp = expanded
+        if (curExp != null) {
             val px = x + W - panelW - 2
             val py = listY
             val maxTextW = panelW - 28
 
             fillRoundedRect(ctx, px, py, x + W - 2, y + H - 2, 4f, panelBg)
 
-            val setList = exp.collectValuesRecursively()
+            val setList = curExp.collectValuesRecursively()
             
-            // 增加顶部与底部的 padding，解决顶部第一项被遮挡切掉的问题
             val paddingTop = 8f
             val setY = py + paddingTop
             val setH = H - (py - y) - 12f
@@ -378,8 +359,8 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             tOff2 = max(0f, tOff2.coerceAtMost(max(0f, totalContentH - setH)))
             sOff2 += (tOff2 - sOff2) * 0.3f
 
-            // 裁切区域起始位置留出Padding，防止边缘剔除
-            ctx.enableScissor(px.toInt(), py.toInt() + 4, (x + W - 2).toInt(), (y + H - 6).toInt())
+            // 修复参数类型问题：全部转换为 Int
+            ctx.enableScissor(px.toInt(), (py + 4).toInt(), (x + W - 2).toInt(), (y + H - 6).toInt())
 
             var curY = setY - sOff2
             for (v in setList) {
@@ -488,7 +469,7 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                     mod.enabled = !mod.enabled
                     flash = 1f; flashRow = clickIdx
                 } else if (btn == 1) {
-                    expanded = if (expand == mod) null else mod
+                    expanded = if (expanded == mod) null else mod
                     sOff2 = 0f; tOff2 = 0f
                     flash = 1f; flashRow = clickIdx
                 }
@@ -496,16 +477,16 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             }
         }
 
-        val exp = expanded
-        if (exp != null && btn == 0) {
+        val curExp = expanded
+        if (curExp != null && btn == 0) {
             val px = x + W - panelW - 2
             val py = listY
             val paddingTop = 8f
             val setY = py + paddingTop
             val setH = H - (py - y) - 12f
 
-            if (mx in px..(px + panelW) && my in py..(py + setH)) {
-                val setList = exp.collectValuesRecursively()
+            if (mx in px..(px + panelW) && my in py.toInt()..(py + setH).toInt()) {
+                val setList = curExp.collectValuesRecursively()
                 var curY = setY - sOff2
 
                 for (v in setList) {
