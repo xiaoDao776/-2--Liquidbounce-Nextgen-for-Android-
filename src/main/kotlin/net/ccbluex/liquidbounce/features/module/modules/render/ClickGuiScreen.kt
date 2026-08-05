@@ -13,6 +13,7 @@ import net.minecraft.client.input.KeyEvent
 import net.minecraft.client.input.MouseButtonEvent
 import net.minecraft.network.chat.Component
 import org.lwjgl.glfw.GLFW
+import java.awt.Color
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.sin
@@ -23,8 +24,8 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
     private var expanded: ClientModule? = null
     private var search = ""
     private var searchFocus = false
-    private var sOff = 5f; private var tOff = 5f
-    private var sOff2 = 5f; private var tOff2 = 5f
+    private var sOff = 0f; private var tOff = 0f
+    private var sOff2 = 0f; private var tOff2 = 0f
     private var anim = 0f
     private var flash = 0f
     private var flashRow = -1
@@ -42,9 +43,6 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
     override fun isPauseScreen() = false
     override fun shouldCloseOnEsc() = true
 
-    /**
-     * 绘制圆角矩形核心方法
-     */
     private fun fillRoundedRect(ctx: GuiGraphics, x1: Float, y1: Float, x2: Float, y2: Float, radius: Float, color: Int) {
         val r = radius.coerceAtMost((x2 - x1) / 2f).coerceAtMost((y2 - y1) / 2f)
         
@@ -92,14 +90,21 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         return "$str..."
     }
 
-    /**
-     * 解析按键绑定/选框展示文本，剔除 key.keyboard. 格式杂质
-     */
     private fun formatDisplayValue(valObj: Any?): String {
         if (valObj == null) return "None"
-        val rawStr = valObj.toString()
+        
+        if (valObj is Collection<*>) {
+            val first = valObj.firstOrNull() ?: return "EMPTY"
+            if (first is Value<*>) {
+                return formatDisplayValue(first.get())
+            }
+            return first.toString().uppercase()
+        }
 
-        // 优先利用反射提取 Bind/Keybind 内的实际按键名
+        if (valObj is Value<*>) {
+            return formatDisplayValue(valObj.get())
+        }
+
         try {
             val cls = valObj.javaClass
             val keyField = cls.declaredFields.find { 
@@ -118,7 +123,14 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             }
         } catch (_: Exception) {}
 
-        // 通用格式化清洗
+        var rawStr = valObj.toString()
+        if (rawStr.contains("Value(") || rawStr.startsWith("[")) {
+            val match = Regex("""name=([^,\s\)]+)""").find(rawStr)
+            if (match != null) {
+                return match.groupValues[1].uppercase()
+            }
+        }
+
         var cleaned = rawStr
             .replace("key.keyboard.", "", ignoreCase = true)
             .replace("key.", "", ignoreCase = true)
@@ -136,10 +148,39 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         return obj is Number || obj is ClosedRange<*> || v is RangedValue<*>
     }
 
+    /**
+     * 判断子项是否为颜色类型
+     */
+    private fun isColorValue(v: Value<*>): Boolean {
+        val obj = v.get() ?: return false
+        if (obj is Color) return true
+        val className = obj.javaClass.simpleName
+        return className.contains("Color", true) || v.name.contains("Color", true)
+    }
+
+    /**
+     * 从颜色对象中提取 Int 颜色值 (ARGB)
+     */
+    private fun extractColorInt(valObj: Any?): Int {
+        if (valObj == null) return 0xFFFFFFFF.toInt()
+        if (valObj is Color) return valObj.rgb
+        if (valObj is Number) return valObj.toInt()
+        
+        try {
+            val cls = valObj.javaClass
+            val rgbMethod = cls.methods.find { it.name == "getRGB" || it.name == "rgb" }
+            if (rgbMethod != null) {
+                return (rgbMethod.invoke(valObj) as Number).toInt()
+            }
+        } catch (_: Exception) {}
+
+        return 0xFFFFFFFF.toInt()
+    }
+
     private fun toggleNextValue(v: Value<*>) {
         val cls = v.javaClass
         try {
-            val nextMethod = cls.methods.find { it.name == "next" && it.parameterCount == 0 }
+            val nextMethod = cls.methods.find { (it.name == "next" || it.name == "toggle") && it.parameterCount == 0 }
             if (nextMethod != null) {
                 nextMethod.invoke(v)
                 return
@@ -147,7 +188,15 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         } catch (_: Exception) {}
 
         val curObj = v.get()
-        
+        if (curObj is Collection<*> && curObj.isNotEmpty()) {
+            val list = curObj.toList()
+            val first = list.firstOrNull()
+            if (first is Value<*>) {
+                toggleNextValue(first)
+                return
+            }
+        }
+
         if (curObj is Enum<*>) {
             val constants = curObj.javaClass.enumConstants
             if (constants != null && constants.isNotEmpty()) {
@@ -161,7 +210,8 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
 
         try {
             val choicesField = cls.declaredFields.find { 
-                it.name.equals("values", true) || it.name.equals("choices", true) || it.name.equals("range", true) 
+                it.name.equals("values", true) || it.name.equals("choices", true) || 
+                it.name.equals("modes", true) || it.name.equals("range", true) 
             }
             if (choicesField != null) {
                 choicesField.isAccessible = true
@@ -202,15 +252,12 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         val f = minecraft!!.font
         val tabW = (W - 24) / cats.size
 
-        // 1. 绘制带有 8px 圆角的整外框大背景
         val R = 8f
         fillRoundedRect(ctx, x, y, x + W, y + H, R, bg)
         
-        // 顶部 Header 标题栏
         ctx.fill(x.toInt() + R.toInt(), y.toInt(), (x + W - R).toInt(), (y + 24).toInt(), headerBg)
         ctx.drawString(f, "§lClickGUI", x.toInt() + 10, y.toInt() + 5, accent)
 
-        // 搜索框
         val searchY = y + 28
         ctx.fill(x.toInt() + 8, searchY.toInt(), (x + W - 8).toInt(), (searchY + 15).toInt(), 0x28000000.toInt())
         val disp = if (search.isEmpty()) "§7Search modules..." else "§f$search"
@@ -222,7 +269,6 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             }
         }
 
-        // 分类 Tabs
         val tabY = searchY + 20
         ctx.fill(x.toInt() + 4, tabY.toInt(), (x + W - 4).toInt(), (tabY + 20).toInt(), 0x18000000.toInt())
         for (i in cats.indices) {
@@ -242,14 +288,13 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         val divY = tabY + 22
         ctx.fill(x.toInt() + 8, divY.toInt(), (x + W - 8).toInt(), (divY + 1).toInt(), 0x20FFFFFF.toInt())
 
-        // 左侧模块列表
         val mods = getMods()
         val listRight = x + W - panelW - 8
         val listY = divY + 6
         val listH = H - (listY - y) - 8
         val rowH = 18
 
-        tOff = max(5f, tOff.coerceAtMost(max(0f, mods.size * rowH - listH + 5f)))
+        tOff = max(0f, tOff.coerceAtMost(max(0f, mods.size * rowH - listH)))
         sOff += (tOff - sOff) * 0.3f * a
 
         for (i in mods.indices) {
@@ -283,12 +328,11 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             }
         }
 
-        // 右侧设置面板
         val exp = expanded
         if (exp != null) {
             val px = x + W - panelW - 2
             val py = listY
-            val maxTextW = panelW - 16
+            val maxTextW = panelW - 28
 
             fillRoundedRect(ctx, px, py, x + W - 2, y + H - 2, 4f, panelBg)
 
@@ -298,28 +342,39 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
 
             var totalContentH = 0f
             for (v in setList) {
-                totalContentH += if (isSliderValue(v)) 18f else 14f
+                totalContentH += if (isSliderValue(v) || isColorValue(v)) 18f else 14f
             }
 
-            tOff2 = max(5f, tOff2.coerceAtMost(max(0f, totalContentH - setH + 5f)))
+            tOff2 = max(0f, tOff2.coerceAtMost(max(0f, totalContentH - setH)))
             sOff2 += (tOff2 - sOff2) * 0.3f
 
-            // 开启坐标裁切限制，避免滑动时文本溢出 ClickGUI 底部
-            ctx.enableScissor(px.toInt(), setY.toInt(), (x + W - 2).toInt(), (y + H - 2).toInt())
+            ctx.enableScissor(px.toInt(), py.toInt(), (x + W - 2).toInt(), (y + H - 2).toInt())
 
             var curY = setY - sOff2
             for (v in setList) {
+                val isColor = isColorValue(v)
                 val isSlider = isSliderValue(v)
-                val itemH = if (isSlider) 18f else 14f
+                val itemH = if (isSlider || isColor) 18f else 14f
 
-                if (curY >= setY - itemH && curY <= setY + setH) {
+                if (curY >= py - 2 && curY <= py + setH) {
                     val mi2 = curY.toInt()
                     try {
                         val valObj = v.get()
                         when {
+                            isColor -> {
+                                val cInt = extractColorInt(valObj)
+                                val text = trimText(f, "${v.name}:", maxTextW)
+                                ctx.drawString(f, text, px.toInt() + 8, mi2 + 2, -1)
+                                
+                                // 绘制颜色预览方块 (调色板预览)
+                                val swatchX = px.toInt() + panelW - 22
+                                val swatchY = mi2 + 2
+                                ctx.fill(swatchX - 1, swatchY - 1, swatchX + 13, swatchY + 11, 0xFFFFFFFF.toInt())
+                                ctx.fill(swatchX, swatchY, swatchX + 12, swatchY + 10, cInt or 0xFF000000.toInt())
+                            }
                             valObj is Boolean -> {
                                 val text = trimText(f, "${v.name}: ${if (valObj) "§aON" else "§cOFF"}", maxTextW)
-                                ctx.drawString(f, text, px.toInt() + 8, mi2 + 2, -1)
+                                ctx.drawString(f, text, px.toInt() + 8, mi2 + 1, -1)
                             }
                             isSlider -> {
                                 var fv = 0f; var mn = 0f; var mxr = 20f
@@ -345,10 +400,9 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                                 ctx.drawString(f, text, px.toInt() + 8, mi2, -1)
                             }
                             else -> {
-                                // 使用格式化清洗函数，展示简洁干净的模式/按键名
                                 val dispStr = formatDisplayValue(valObj)
                                 val text = trimText(f, "${v.name}: §b$dispStr", maxTextW)
-                                ctx.drawString(f, text, px.toInt() + 8, mi2 + 2, -1)
+                                ctx.drawString(f, text, px.toInt() + 8, mi2 + 1, -1)
                             }
                         }
                     } catch (_: Exception) {}
@@ -356,7 +410,6 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                 curY += itemH
             }
 
-            // 关闭裁切限制
             ctx.disableScissor()
         }
     }
@@ -382,7 +435,7 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                 val tx = x + 8 + i * tabW
                 if (mx in tx..(tx + tabW)) {
                     cat = i
-                    sOff = 5f; tOff = 5f
+                    sOff = 0f; tOff = 0f
                     expanded = null
                     return true
                 }
@@ -406,6 +459,7 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                     flash = 1f; flashRow = clickIdx
                 } else if (btn == 1) {
                     expanded = if (expanded == mod) null else mod
+                    sOff2 = 0f; tOff2 = 0f
                     flash = 1f; flashRow = clickIdx
                 }
                 return true
@@ -419,18 +473,38 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             val setY = py + 4
             val setH = H - (setY - y) - 6
 
-            if (mx in px..(px + panelW) && my in setY..(setY + setH)) {
+            if (mx in px..(px + panelW) && my in py..(py + setH)) {
                 val setList = exp.collectValuesRecursively()
                 var curY = setY - sOff2
 
                 for (v in setList) {
+                    val isColor = isColorValue(v)
                     val isSlider = isSliderValue(v)
-                    val itemH = if (isSlider) 18f else 14f
+                    val itemH = if (isSlider || isColor) 18f else 14f
 
                     if (my >= curY && my < curY + itemH) {
                         try {
                             val valObj = v.get()
                             when {
+                               isColor -> {
+                                    // 点击颜色方块时，在常见预设颜色间快速循环切换（RGB快速调色）
+                                    val colors = arrayOf(
+                                        Color(255, 255, 255), Color(65, 130, 225), Color(255, 85, 85),
+                                        Color(85, 255, 85), Color(255, 255, 85), Color(255, 85, 255),
+                                        Color(85, 255, 255), Color(0, 0, 0)
+                                    )
+                                    val curC = extractColorInt(valObj)
+                                    val matchIdx = colors.indexOfFirst { (it.rgb and 0xFFFFFF) == (curC and 0xFFFFFF) }
+                                    val nextColor = colors[(matchIdx + 1) % colors.size]
+
+                                    if (valObj is Color) {
+                                        @Suppress("UNCHECKED_CAST")
+                                        (v as Value<Color>).set(nextColor)
+                                    } else if (valObj is Number) {
+                                        @Suppress("UNCHECKED_CAST")
+                                        (v as Value<Int>).set(nextColor.rgb)
+                                    }
+                                }
                                 valObj is Boolean -> {
                                     @Suppress("UNCHECKED_CAST")
                                     (v as Value<Boolean>).set(!valObj)
@@ -479,9 +553,9 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         val x = (minecraft!!.window.guiScaledWidth - W) / 2
         val panelX = x + W - panelW - 2
         if (expanded != null && mx >= panelX) {
-            tOff2 = (tOff2 - v.toFloat() * 18f).coerceAtLeast(5f)
+            tOff2 = (tOff2 - v.toFloat() * 18f).coerceAtLeast(0f)
         } else {
-            tOff = (tOff - v.toFloat() * 18f).coerceAtLeast(5f)
+            tOff = (tOff - v.toFloat() * 18f).coerceAtLeast(0f)
         }
         return true
     }
