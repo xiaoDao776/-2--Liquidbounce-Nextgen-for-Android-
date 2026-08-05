@@ -24,15 +24,21 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
     private var expanded: ClientModule? = null
     private var search = ""
     private var searchFocus = false
+    private var listeningValue: Value<*>? = null // 当前正在等待按键绑定的 Value
+
     private var sOff = 0f; private var tOff = 0f
     private var sOff2 = 0f; private var tOff2 = 0f
     private var anim = 0f
     private var flash = 0f
     private var flashRow = -1
 
+    // 调色板拖拽控制状态
+    private var draggingColorValue: Value<*>? = null
+    private var activePickerMode = 0 // 1: SV Box, 2: Hue, 3: Alpha
+
     private val cats = ModuleCategories.entries.toList()
-    private val W = 430; private val H = 310
-    private val panelW = 160
+    private val W = 450; private val H = 320
+    private val panelW = 170
 
     private val accent = 0xFF4182E1.toInt()
     private val bg = 0xE80C0C10.toInt()
@@ -45,7 +51,6 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
 
     private fun fillRoundedRect(ctx: GuiGraphics, x1: Float, y1: Float, x2: Float, y2: Float, radius: Float, color: Int) {
         val r = radius.coerceAtMost((x2 - x1) / 2f).coerceAtMost((y2 - y1) / 2f)
-        
         ctx.fill((x1 + r).toInt(), y1.toInt(), (x2 - r).toInt(), y2.toInt(), color)
         ctx.fill(x1.toInt(), (y1 + r).toInt(), (x1 + r).toInt(), (y2 - r).toInt(), color)
         ctx.fill((x2 - r).toInt(), (y1 + r).toInt(), x2.toInt(), (y2 - r).toInt(), color)
@@ -92,13 +97,11 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
 
     private fun getActualValue(v: Value<*>): Any? {
         var obj: Any? = v.get() ?: return null
-        
         var depth = 0
         while (obj is Value<*> && depth < 5) {
             obj = obj.get()
             depth++
         }
-
         if (obj is Collection<*>) {
             val first = obj.firstOrNull() ?: return "EMPTY"
             if (first is Value<*>) return getActualValue(first)
@@ -109,11 +112,20 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             if (first is Value<*>) return getActualValue(first)
             return first
         }
-
         return obj
     }
 
+    private fun isBindValue(v: Value<*>): Boolean {
+        val name = v.name.lowercase()
+        if (name.contains("key") || name.contains("bind")) return true
+        val actual = getActualValue(v) ?: return false
+        val clsName = actual.javaClass.simpleName.lowercase()
+        return clsName.contains("key") || clsName.contains("bind")
+    }
+
     private fun formatDisplayValue(v: Value<*>): String {
+        if (v == listeningValue) return "[LISTENING...]"
+
         val actual = getActualValue(v) ?: return "NONE"
 
         try {
@@ -166,20 +178,34 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         return className.contains("Color", true) || v.name.contains("Color", true)
     }
 
-    private fun extractColorInt(v: Value<*>): Int {
-        val valObj = getActualValue(v) ?: return 0xFFFFFFFF.toInt()
-        if (valObj is Color) return valObj.rgb
-        if (valObj is Number) return valObj.toInt()
+    private fun extractColor(v: Value<*>): Color {
+        val valObj = getActualValue(v) ?: return Color.WHITE
+        if (valObj is Color) return valObj
+        if (valObj is Number) return Color(valObj.toInt(), true)
         
         try {
             val cls = valObj.javaClass
             val rgbMethod = cls.methods.find { it.name == "getRGB" || it.name == "rgb" }
             if (rgbMethod != null) {
-                return (rgbMethod.invoke(valObj) as Number).toInt()
+                val rgb = (rgbMethod.invoke(valObj) as Number).toInt()
+                return Color(rgb, true)
             }
         } catch (_: Exception) {}
 
-        return 0xFFFFFFFF.toInt()
+        return Color.WHITE
+    }
+
+    private fun updateColorValue(v: Value<*>, color: Color) {
+        val actual = getActualValue(v)
+        try {
+            if (actual is Color) {
+                @Suppress("UNCHECKED_CAST")
+                (v as Value<Color>).set(color)
+            } else {
+                @Suppress("UNCHECKED_CAST")
+                (v as Value<Int>).set(color.rgb)
+            }
+        } catch (_: Exception) {}
     }
 
     private fun toggleNextValue(v: Value<*>) {
@@ -353,20 +379,27 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
 
             var totalContentH = 0f
             for (v in setList) {
-                totalContentH += if (isSliderValue(v) || isColorValue(v)) 20f else 16f
+                totalContentH += when {
+                    isColorValue(v) -> 75f // 高级调色板面板的高度
+                    isSliderValue(v) -> 20f
+                    else -> 16f
+                }
             }
 
             tOff2 = max(0f, tOff2.coerceAtMost(max(0f, totalContentH - setH)))
             sOff2 += (tOff2 - sOff2) * 0.3f
 
-            // 修复参数类型问题：全部转换为 Int
             ctx.enableScissor(px.toInt(), (py + 4).toInt(), (x + W - 2).toInt(), (y + H - 6).toInt())
 
             var curY = setY - sOff2
             for (v in setList) {
                 val isColor = isColorValue(v)
                 val isSlider = isSliderValue(v)
-                val itemH = if (isSlider || isColor) 20f else 16f
+                val itemH = when {
+                    isColor -> 75f
+                    isSlider -> 20f
+                    else -> 16f
+                }
 
                 if (curY >= py - itemH && curY <= py + setH + itemH) {
                     val mi2 = curY.toInt()
@@ -374,17 +407,65 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                         val actualVal = getActualValue(v)
                         when {
                             isColor -> {
-                                val cInt = extractColorInt(v)
+                                val c = extractColor(v)
                                 val text = trimText(f, "${v.name}:", maxTextW)
-                                ctx.drawString(f, text, px.toInt() + 8, mi2 + 2, -1)
-                                
-                                val swatchX = px.toInt() + panelW - 22
-                                val swatchY = mi2 + 2
-                                ctx.fill(swatchX - 1, swatchY - 1, swatchX + 13, swatchY + 11, 0xFFFFFFFF.toInt())
-                                ctx.fill(swatchX, swatchY, swatchX + 12, swatchY + 10, cInt or 0xFF000000.toInt())
+                                ctx.drawString(f, text, px.toInt() + 8, mi2, -1)
+
+                                val hexStr = "#%02X%02X%02X%02X".format(c.alpha, c.red, c.green, c.blue)
+                                ctx.drawString(f, "§7$hexStr", px.toInt() + 8, mi2 + 12, -1)
+
+                                // 类似 Ambience 的调色板区域
+                                val boxX = px.toInt() + 8
+                                val boxY = mi2 + 24
+                                val boxW = 90
+                                val boxH = 45
+
+                                // 渲染 SV (Saturation-Value) 基础渐变网格
+                                val hsv = Color.RGBtoHSB(c.red, c.green, c.blue, null)
+                                for (gx in 0 until boxW step 3) {
+                                    for (gy in 0 until boxH step 3) {
+                                        val sat = gx.toFloat() / boxW
+                                        val valStep = 1f - (gy.toFloat() / boxH)
+                                        val rgb = Color.HSBtoRGB(hsv[0], sat, valStep)
+                                        ctx.fill(boxX + gx, boxY + gy, boxX + gx + 3, boxY + gy + 3, rgb or 0xFF000000.toInt())
+                                    }
+                                }
+                                val circleX = boxX + (hsv[1] * boxW).toInt()
+                                val circleY = boxY + ((1f - hsv[2]) * boxH).toInt()
+                                ctx.fill(circleX - 2, circleY - 2, circleX + 2, circleY + 2, 0xFFFFFFFF.toInt())
+
+                                // 色相条 Hue Bar
+                                val hueX = boxX + boxW + 8
+                                val barW = 8
+                                for (gh in 0 until boxH step 2) {
+                                    val hueStep = gh.toFloat() / boxH
+                                    val rgb = Color.HSBtoRGB(hueStep, 1f, 1f)
+                                    ctx.fill(hueX, boxY + gh, hueX + barW, boxY + gh + 2, rgb or 0xFF000000.toInt())
+                                }
+                                val hueY = boxY + (hsv[0] * boxH).toInt()
+                                ctx.fill(hueX - 1, hueY - 1, hueX + barW + 1, hueY + 1, 0xFFFFFFFF.toInt())
+
+                                // Alpha Bar
+                                val alphaX = hueX + barW + 6
+                                for (ga in 0 until boxH step 2) {
+                                    val aRatio = 1f - (ga.toFloat() / boxH)
+                                    val aInt = (aRatio * 255).toInt()
+                                    ctx.fill(alphaX, boxY + ga, alphaX + barW, boxY + ga + 2, (aInt shl 24) or (c.rgb and 0x00FFFFFF))
+                                }
+                                val alphaY = boxY + ((1f - (c.alpha / 255f)) * boxH).toInt()
+                                ctx.fill(alphaX - 1, alphaY - 1, alphaX + barW + 1, alphaY + 1, 0xFFFFFFFF.toInt())
+
+                                // 颜色预览块
+                                val swatchX = alphaX + barW + 6
+                                ctx.fill(swatchX, boxY, swatchX + 12, boxY + boxH, c.rgb)
                             }
                             actualVal is Boolean -> {
                                 val text = trimText(f, "${v.name}: ${if (actualVal) "§aON" else "§cOFF"}", maxTextW)
+                                ctx.drawString(f, text, px.toInt() + 8, mi2 + 2, -1)
+                            }
+                            isBindValue(v) -> {
+                                val dispStr = formatDisplayValue(v)
+                                val text = trimText(f, "${v.name}: §e$dispStr", maxTextW)
                                 ctx.drawString(f, text, px.toInt() + 8, mi2 + 2, -1)
                             }
                             isSlider -> {
@@ -448,6 +529,7 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                     cat = i
                     sOff = 0f; tOff = 0f
                     expanded = null
+                    listeningValue = null
                     return true
                 }
             }
@@ -472,6 +554,7 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                     expanded = if (expanded == mod) null else mod
                     sOff2 = 0f; tOff2 = 0f
                     flash = 1f; flashRow = clickIdx
+                    listeningValue = null
                 }
                 return true
             }
@@ -492,29 +575,50 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                 for (v in setList) {
                     val isColor = isColorValue(v)
                     val isSlider = isSliderValue(v)
-                    val itemH = if (isSlider || isColor) 20f else 16f
+                    val isBind = isBindValue(v)
+                    val itemH = when {
+                        isColor -> 75f
+                        isSlider -> 20f
+                        else -> 16f
+                    }
 
                     if (my >= curY && my < curY + itemH) {
                         try {
                             val actualVal = getActualValue(v)
                             when {
                                 isColor -> {
-                                    val colors = arrayOf(
-                                        Color(255, 255, 255), Color(65, 130, 225), Color(255, 85, 85),
-                                        Color(85, 255, 85), Color(255, 255, 85), Color(255, 85, 255),
-                                        Color(85, 255, 255), Color(0, 0, 0)
-                                    )
-                                    val curC = extractColorInt(v)
-                                    val matchIdx = colors.indexOfFirst { (it.rgb and 0xFFFFFF) == (curC and 0xFFFFFF) }
-                                    val nextColor = colors[(matchIdx + 1) % colors.size]
+                                    val c = extractColor(v)
+                                    val boxX = px.toInt() + 8
+                                    val boxY = curY.toInt() + 24
+                                    val boxW = 90
+                                    val boxH = 45
+                                    val barW = 8
 
-                                    if (actualVal is Color) {
-                                        @Suppress("UNCHECKED_CAST")
-                                        (v as Value<Color>).set(nextColor)
-                                    } else {
-                                        @Suppress("UNCHECKED_CAST")
-                                        (v as Value<Int>).set(nextColor.rgb)
+                                    val hueX = boxX + boxW + 8
+                                    val alphaX = hueX + barW + 6
+
+                                    val hsv = Color.RGBtoHSB(c.red, c.green, c.blue, null)
+
+                                    if (mx in boxX..(boxX + boxW) && my in boxY..(boxY + boxH)) {
+                                        val sat = ((mx - boxX).toFloat() / boxW).coerceIn(0f, 1f)
+                                        val br = (1f - ((my - boxY).toFloat() / boxH)).coerceIn(0f, 1f)
+                                        val newRgb = Color.HSBtoRGB(hsv[0], sat, br)
+                                        val newColor = Color((newRgb and 0x00FFFFFF) or (c.alpha shl 24), true)
+                                        updateColorValue(v, newColor)
+                                    } else if (mx in hueX..(hueX + barW) && my in boxY..(boxY + boxH)) {
+                                        val newHue = ((my - boxY).toFloat() / boxH).coerceIn(0f, 1f)
+                                        val newRgb = Color.HSBtoRGB(newHue, hsv[1], hsv[2])
+                                        val newColor = Color((newRgb and 0x00FFFFFF) or (c.alpha shl 24), true)
+                                        updateColorValue(v, newColor)
+                                    } else if (mx in alphaX..(alphaX + barW) && my in boxY..(boxY + boxH)) {
+                                        val newAlpha = ((1f - ((my - boxY).toFloat() / boxH)) * 255).toInt().coerceIn(0, 255)
+                                        val newColor = Color(c.red, c.green, c.blue, newAlpha)
+                                        updateColorValue(v, newColor)
                                     }
+                                }
+                                isBind -> {
+                                    // 开启等待按键输入状态
+                                    listeningValue = if (listeningValue == v) null else v
                                 }
                                 actualVal is Boolean -> {
                                     @Suppress("UNCHECKED_CAST")
@@ -572,10 +676,41 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
     }
 
     override fun keyPressed(input: KeyEvent): Boolean {
+        // 如果处于按键绑定监听阶段，捕获任何按键并写入 Bind 属性
+        val lv = listeningValue
+        if (lv != null) {
+            val key = input.key
+            val targetKeyName = if (key == GLFW.GLFW_KEY_ESCAPE || key == GLFW.GLFW_KEY_DELETE) "NONE" else GLFW.glfwGetKeyName(key, 0)?.uppercase() ?: "KEY_$key"
+
+            try {
+                val actual = getActualValue(lv)
+                if (actual != null) {
+                    val cls = actual.javaClass
+                    val fields = cls.declaredFields
+                    val keyField = fields.find { it.name.contains("key", true) || it.name.contains("bound", true) }
+                    
+                    if (keyField != null) {
+                        keyField.isAccessible = true
+                        keyField.set(actual, key)
+                    } else if (actual is Int) {
+                        @Suppress("UNCHECKED_CAST")
+                        (lv as Value<Int>).set(key)
+                    } else if (actual is String) {
+                        @Suppress("UNCHECKED_CAST")
+                        (lv as Value<String>).set(targetKeyName)
+                    }
+                }
+            } catch (_: Exception) {}
+
+            listeningValue = null
+            return true
+        }
+
         if (input.key == GLFW.GLFW_KEY_ESCAPE) {
             onClose()
             return true
         }
+
         if (searchFocus) {
             when (input.key) {
                 GLFW.GLFW_KEY_BACKSPACE -> {
