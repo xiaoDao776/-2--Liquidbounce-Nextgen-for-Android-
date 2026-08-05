@@ -40,9 +40,6 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
     override fun isPauseScreen() = false
     override fun shouldCloseOnEsc() = true
 
-    /**
-     * 将长文本截断以防止跑出右侧 GUI 边界
-     */
     private fun trimText(font: Font, text: String, maxW: Int): String {
         if (font.width(text) <= maxW) return text
         var str = text
@@ -53,25 +50,65 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
     }
 
     /**
-     * 优雅格式化各种 Complex/Value 类型为简短字符串
+     * 判断 Value 是否支持滑条（单个数字或区间范围）
      */
-    private fun formatValueDisplay(v: Value<*>): String {
-        val valObj = v.get() ?: return "null"
-        val valStr = valObj.toString()
+    private fun isSliderValue(v: Value<*>): Boolean {
+        val obj = v.get() ?: return false
+        return obj is Number || obj is ClosedRange<*> || v is RangedValue<*>
+    }
+
+    /**
+     * 切换枚举、模式（List/Choice/Enum）到下一个选项
+     */
+    private fun toggleNextValue(v: Value<*>) {
+        val cls = v.javaClass
         
-        // 专门处理 KeyBind 对象，避免输出 InputBind(boundKey=...)
-        if (valStr.contains("boundKey=")) {
-            val keyPart = valStr.substringAfter("boundKey=").substringBefore(",").substringBefore(")")
-            return keyPart.replace("key.keyboard.", "").uppercase()
+        // 1. 尝试直接调用 LiquidBounce Value 自带的 next() 方法
+        try {
+            val nextMethod = cls.methods.find { it.name == "next" && it.parameterCount == 0 }
+            if (nextMethod != null) {
+                nextMethod.invoke(v)
+                return
+            }
+        } catch (_: Exception) {}
+
+        // 2. 尝试切换 Enum 类型
+        val curObj = v.get()
+        if (curObj is Enum<*>) {
+            val constants = curObj.declaringClass.enumConstants
+            val nextIdx = (curObj.ordinal + 1) % constants.size
+            @Suppress("UNCHECKED_CAST")
+            (v as Value<Any>).set(constants[nextIdx])
+            return
         }
-        
-        // 专门处理简单对象数组或长映射
-        if (valStr.contains("[")) {
-            val shortStr = valStr.substringBefore("[")
-            if (shortStr.isNotBlank()) return shortStr
-        }
-        
-        return valStr
+
+        // 3. 尝试读取 values / choices 集合属性进行轮播
+        try {
+            val choicesField = cls.declaredFields.find { 
+                it.name.equals("values", true) || it.name.equals("choices", true) || it.name.equals("range", true) 
+            }
+            if (choicesField != null) {
+                choicesField.isAccessible = true
+                val choices = choicesField.get(v)
+                if (choices is Array<*>) {
+                    val idx = choices.indexOf(curObj)
+                    val nextIdx = if (idx >= 0) (idx + 1) % choices.size else 0
+                    choices[nextIdx]?.let { 
+                        @Suppress("UNCHECKED_CAST")
+                        (v as Value<Any>).set(it)
+                    }
+                    return
+                } else if (choices is List<*>) {
+                    val idx = choices.indexOf(curObj)
+                    val nextIdx = if (idx >= 0) (idx + 1) % choices.size else 0
+                    choices[nextIdx]?.let { 
+                        @Suppress("UNCHECKED_CAST")
+                        (v as Value<Any>).set(it)
+                    }
+                    return
+                }
+            }
+        } catch (_: Exception) {}
     }
 
     override fun render(ctx: GuiGraphics, mx: Int, my: Int, dt: Float) {
@@ -166,24 +203,24 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             }
         }
 
-        // 右侧设置子菜单绘制（包含边界裁剪防御）
+        // 右侧设置子菜单绘制
         val exp = expanded
         if (exp != null) {
             val px = x + W - panelW - 2
             val py = listY
-            val maxTextW = panelW - 16 // 设置列表最大可容纳文字宽度
+            val maxTextW = panelW - 16
 
             ctx.fill(px, py, x + W - 2, y + H - 2, panelBg)
-            ctx.drawString(f, trimText(f, "§l" + exp.name, maxTextW), px + 6, py + 3, accent)
+            
+            // 已完全按要求删除右侧顶部的蓝字模块名标题！
 
             val setList = exp.collectValuesRecursively()
-            val setY = py + 14
+            val setY = py + 4 // 由于删除了顶部模块名标题，起始偏移提升
             val setH = H - (setY - y) - 6
 
             var totalContentH = 0f
             for (v in setList) {
-                val valObj = v.get()
-                totalContentH += if (valObj is Number) 18f else 14f
+                totalContentH += if (isSliderValue(v)) 18f else 14f
             }
 
             tOff2 = max(5f, tOff2.coerceAtMost(max(0f, totalContentH - setH + 5f)))
@@ -191,34 +228,55 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
 
             var curY = setY - sOff2
             for (v in setList) {
-                val valObj = v.get()
-                val itemH = if (valObj is Number) 18f else 14f
+                val isSlider = isSliderValue(v)
+                val itemH = if (isSlider) 18f else 14f
 
                 if (curY >= setY - itemH && curY <= setY + setH) {
                     val mi2 = curY.toInt()
                     try {
-                        when (valObj) {
-                            is Boolean -> {
+                        val valObj = v.get()
+                        when {
+                            // 1. 开关 (Boolean)
+                            valObj is Boolean -> {
                                 val text = trimText(f, "${v.name}: ${if (valObj) "§aON" else "§cOFF"}", maxTextW)
                                 ctx.drawString(f, text, px + 8, mi2 + 2, -1)
                             }
-                            is Number -> {
-                                val fv = valObj.toFloat()
-                                val mn = if (v is RangedValue<*>) (v.range.start as? Number)?.toFloat() ?: 0f else 0f
-                                val mxr = if (v is RangedValue<*>) (v.range.endInclusive as? Number)?.toFloat() ?: 100f else 100f
+
+                            // 2. 区间数值滑条 / 单数值滑条 (CPS / Range / Number)
+                            isSlider -> {
+                                var fv = 0f
+                                var mn = 0f
+                                var mxr = 20f
+
+                                if (valObj is ClosedRange<*>) {
+                                    val start = (valObj.start as? Number)?.toFloat() ?: 0f
+                                    val end = (valObj.endInclusive as? Number)?.toFloat() ?: 20f
+                                    fv = end
+                                    mn = 1f
+                                    mxr = 30f
+                                } else if (valObj is Number) {
+                                    fv = valObj.toFloat()
+                                    if (v is RangedValue<*>) {
+                                        mn = (v.range.start as? Number)?.toFloat() ?: 0f
+                                        mxr = (v.range.endInclusive as? Number)?.toFloat() ?: 100f
+                                    }
+                                }
+
                                 val bw = panelW - 16; val bh = 4
                                 val bx = px + 8; val by = mi2 + 11
                                 ctx.fill(bx, by, bx + bw, by + bh, 0x30000000.toInt())
-                                val r = ((fv - mn) / (mxr - mn)).coerceIn(0f, 1f)
+                                val r = ((fv - mn) / max(0.001f, mxr - mn)).coerceIn(0f, 1f)
                                 ctx.fill(bx, by, (bx + bw * r).toInt(), by + bh, accent)
 
-                                val text = trimText(f, "${v.name}: ${"%.1f".format(fv)}", maxTextW)
+                                val dispVal = if (valObj is ClosedRange<*>) "${valObj.start} - ${valObj.endInclusive}" else "%.1f".format(fv)
+                                val text = trimText(f, "${v.name}: $dispVal", maxTextW)
                                 ctx.drawString(f, text, px + 8, mi2, -1)
                             }
+
+                            // 3. 模式 / 枚举 / 点击切换类 (Mode / Choice / List)
                             else -> {
-                                // 提取清理后的文字，并进行宽度截断
-                                val displayVal = formatValueDisplay(v)
-                                val text = trimText(f, "${v.name}: §7$displayVal", maxTextW)
+                                val dispStr = valObj?.toString()?.replace("InputBind", "")?.take(20) ?: "None"
+                                val text = trimText(f, "${v.name}: §b$dispStr", maxTextW)
                                 ctx.drawString(f, text, px + 8, mi2 + 2, -1)
                             }
                         }
@@ -280,11 +338,12 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             }
         }
 
+        // 右侧设置项交互处理
         val exp = expanded
         if (exp != null && btn == 0) {
             val px = x + W - panelW - 2
             val py = listY
-            val setY = py + 14
+            val setY = py + 4
             val setH = H - (setY - y) - 6
 
             if (mx in px..(px + panelW) && my in setY..(setY + setH)) {
@@ -292,30 +351,49 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                 var curY = setY - sOff2
 
                 for (v in setList) {
-                    val valObj = v.get()
-                    val itemH = if (valObj is Number) 18f else 14f
+                    val isSlider = isSliderValue(v)
+                    val itemH = if (isSlider) 18f else 14f
 
                     if (my >= curY && my < curY + itemH) {
                         try {
-                            when (valObj) {
-                                is Boolean -> {
+                            val valObj = v.get()
+                            when {
+                                // 1. 开关 (Boolean) 切换
+                                valObj is Boolean -> {
                                     @Suppress("UNCHECKED_CAST")
                                     (v as Value<Boolean>).set(!valObj)
                                 }
-                                is Number -> {
-                                    val mn = if (v is RangedValue<*>) (v.range.start as? Number)?.toFloat() ?: 0f else 0f
-                                    val mxr = if (v is RangedValue<*>) (v.range.endInclusive as? Number)?.toFloat() ?: 100f else 100f
-                                    val bw = panelW - 16
-                                    val bx = px + 8
+
+                                // 2. 数值 / 区间滑条调整
+                                isSlider -> {
+                                    var mn = 0f; var mxr = 20f
+                                    if (valObj is ClosedRange<*>) {
+                                        mn = 1f; mxr = 30f
+                                    } else if (v is RangedValue<*>) {
+                                        mn = (v.range.start as? Number)?.toFloat() ?: 0f
+                                        mxr = (v.range.endInclusive as? Number)?.toFloat() ?: 100f
+                                    }
+
+                                    val bw = panelW - 16; val bx = px + 8
                                     val nr = ((mx - bx).toFloat() / bw).coerceIn(0f, 1f)
                                     val nv = mn + nr * (mxr - mn)
-                                    if (valObj is Float) {
+
+                                    if (valObj is IntRange) {
+                                        val center = nv.toInt()
+                                        @Suppress("UNCHECKED_CAST")
+                                        (v as Value<IntRange>).set((center - 1).coerceAtLeast(1)..center)
+                                    } else if (valObj is Float) {
                                         @Suppress("UNCHECKED_CAST")
                                         (v as Value<Float>).set(nv)
                                     } else if (valObj is Int) {
                                         @Suppress("UNCHECKED_CAST")
                                         (v as Value<Int>).set(nv.toInt())
                                     }
+                                }
+
+                                // 3. 点击切换模式（单点/蝴蝶点/更多模式）
+                                else -> {
+                                    toggleNextValue(v)
                                 }
                             }
                         } catch (_: Exception) {}
