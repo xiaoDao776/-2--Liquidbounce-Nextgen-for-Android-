@@ -13,7 +13,9 @@ import net.minecraft.client.input.KeyEvent
 import net.minecraft.client.input.MouseButtonEvent
 import net.minecraft.network.chat.Component
 import org.lwjgl.glfw.GLFW
+import kotlin.math.cos
 import kotlin.math.max
+import kotlin.math.sin
 
 class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
 
@@ -40,6 +42,49 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
     override fun isPauseScreen() = false
     override fun shouldCloseOnEsc() = true
 
+    /**
+     * 绘制圆角矩形核心方法（包含四个角的弧度平滑填充）
+     */
+    private fun fillRoundedRect(ctx: GuiGraphics, x1: Float, y1: Float, x2: Float, y2: Float, radius: Float, color: Int) {
+        val r = radius.coerceAtMost((x2 - x1) / 2f).coerceAtMost((y2 - y1) / 2f)
+        
+        // 1. 绘制中间的主体交叉十字直角矩形
+        ctx.fill((x1 + r).toInt(), y1.toInt(), (x2 - r).toInt(), y2.toInt(), color)
+        ctx.fill(x1.toInt(), (y1 + r).toInt(), (x1 + r).toInt(), (y2 - r).toInt(), color)
+        ctx.fill((x2 - r).toInt(), (y1 + r).toInt(), x2.toInt(), (y2 - r).toInt(), color)
+
+        // 2. 绘制 4 个圆角的扇形补全
+        val corners = arrayOf(
+            floatArrayOf(x1 + r, y1 + r, 180f, 270f), // 左上
+            floatArrayOf(x2 - r, y1 + r, 270f, 360f), // 右上
+            floatArrayOf(x2 - r, y2 - r, 0f, 90f),    // 右下
+            floatArrayOf(x1 + r, y2 - r, 90f, 180f)   // 左下
+        )
+
+        for (c in corners) {
+            val cx = c[0]; val cy = c[1]
+            val startAng = c[2]; val endAng = c[3]
+            var a = startAng
+            while (a < endAng) {
+                val rad1 = Math.toRadians(a.toDouble())
+                val rad2 = Math.toRadians((a + 10).coerceAtMost(endAng).toDouble())
+                
+                val px1 = cx + (cos(rad1) * r).toFloat()
+                val py1 = cy + (sin(rad1) * r).toFloat()
+                val px2 = cx + (cos(rad2) * r).toFloat()
+                val py2 = cy + (sin(rad2) * r).toFloat()
+
+                val minX = cx.coerceAtMost(px1).coerceAtMost(px2).toInt()
+                val maxX = cx.coerceAtLeast(px1).coerceAtLeast(px2).toInt()
+                val minY = cy.coerceAtMost(py1).coerceAtMost(py2).toInt()
+                val maxY = cy.coerceAtLeast(py1).coerceAtLeast(py2).toInt()
+
+                ctx.fill(minX, minY, max(minX + 1, maxX), max(minY + 1, maxY), color)
+                a += 10f
+            }
+        }
+    }
+
     private fun trimText(font: Font, text: String, maxW: Int): String {
         if (font.width(text) <= maxW) return text
         var str = text
@@ -49,21 +94,13 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         return "$str..."
     }
 
-    /**
-     * 判断 Value 是否支持滑条（单个数字或区间范围）
-     */
     private fun isSliderValue(v: Value<*>): Boolean {
         val obj = v.get() ?: return false
         return obj is Number || obj is ClosedRange<*> || v is RangedValue<*>
     }
 
-    /**
-     * 切换枚举、模式（List/Choice/Enum）到下一个选项
-     */
     private fun toggleNextValue(v: Value<*>) {
         val cls = v.javaClass
-        
-        // 1. 尝试直接调用 LiquidBounce Value 自带的 next() 方法
         try {
             val nextMethod = cls.methods.find { it.name == "next" && it.parameterCount == 0 }
             if (nextMethod != null) {
@@ -72,17 +109,20 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             }
         } catch (_: Exception) {}
 
-        // 2. 尝试切换 Enum 类型
         val curObj = v.get()
+        
+        // 修复：使用 javaClass.enumConstants 获取枚举常数数组，彻底解决编译器类型错误
         if (curObj is Enum<*>) {
-            val constants = curObj.declaringClass.enumConstants
-            val nextIdx = (curObj.ordinal + 1) % constants.size
-            @Suppress("UNCHECKED_CAST")
-            (v as Value<Any>).set(constants[nextIdx])
-            return
+            val constants = curObj.javaClass.enumConstants
+            if (constants != null && constants.isNotEmpty()) {
+                val nextIdx = (curObj.ordinal + 1) % constants.size
+                val nextVal: Any = constants[nextIdx]
+                @Suppress("UNCHECKED_CAST")
+                (v as Value<Any>).set(nextVal)
+                return
+            }
         }
 
-        // 3. 尝试读取 values / choices 集合属性进行轮播
         try {
             val choicesField = cls.declaredFields.find { 
                 it.name.equals("values", true) || it.name.equals("choices", true) || it.name.equals("range", true) 
@@ -93,17 +133,19 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                 if (choices is Array<*>) {
                     val idx = choices.indexOf(curObj)
                     val nextIdx = if (idx >= 0) (idx + 1) % choices.size else 0
-                    choices[nextIdx]?.let { 
+                    val nextVal = choices[nextIdx]
+                    if (nextVal != null) {
                         @Suppress("UNCHECKED_CAST")
-                        (v as Value<Any>).set(it)
+                        (v as Value<Any>).set(nextVal)
                     }
                     return
                 } else if (choices is List<*>) {
                     val idx = choices.indexOf(curObj)
                     val nextIdx = if (idx >= 0) (idx + 1) % choices.size else 0
-                    choices[nextIdx]?.let { 
+                    val nextVal = choices[nextIdx]
+                    if (nextVal != null) {
                         @Suppress("UNCHECKED_CAST")
-                        (v as Value<Any>).set(it)
+                        (v as Value<Any>).set(nextVal)
                     }
                     return
                 }
@@ -119,47 +161,50 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         if (flash > 0f) flash -= dt / 3f
         else flash = 0f
 
-        val x = (minecraft!!.window.guiScaledWidth - W) / 2
-        val y = (minecraft!!.window.guiScaledHeight - H) / 2
+        val x = (minecraft!!.window.guiScaledWidth - W) / 2f
+        val y = (minecraft!!.window.guiScaledHeight - H) / 2f
         val f = minecraft!!.font
         val tabW = (W - 24) / cats.size
 
-        // 背景与标题
-        ctx.fill(x, y, x + W, y + H, bg)
-        ctx.fill(x, y, x + W, y + 24, headerBg)
-        ctx.drawString(f, "§lClickGUI", x + 10, y + 5, accent)
+        // 1. 绘制带有 8px 圆角的整外框大背景
+        val R = 8f
+        fillRoundedRect(ctx, x, y, x + W, y + H, R, bg)
+        
+        // 顶部 Header 标题栏
+        ctx.fill(x.toInt() + R.toInt(), y.toInt(), (x + W - R).toInt(), (y + 24).toInt(), headerBg)
+        ctx.drawString(f, "§lClickGUI", x.toInt() + 10, y.toInt() + 5, accent)
 
         // 搜索框
         val searchY = y + 28
-        ctx.fill(x + 8, searchY, x + W - 8, searchY + 15, 0x28000000.toInt())
+        ctx.fill(x.toInt() + 8, searchY.toInt(), (x + W - 8).toInt(), (searchY + 15).toInt(), 0x28000000.toInt())
         val disp = if (search.isEmpty()) "§7Search modules..." else "§f$search"
-        ctx.drawString(f, trimText(f, disp, W - 30), x + 12, searchY + 2, -1)
+        ctx.drawString(f, trimText(f, disp, W - 30), x.toInt() + 12, searchY.toInt() + 2, -1)
         if (searchFocus) {
-            val cx = x + 12 + f.width(search)
+            val cx = x.toInt() + 12 + f.width(search)
             if (cx < x + W - 12) {
-                ctx.fill(cx, searchY + 2, cx + 1, searchY + 13, 0xFFFFFFFF.toInt())
+                ctx.fill(cx, searchY.toInt() + 2, cx + 1, searchY.toInt() + 13, 0xFFFFFFFF.toInt())
             }
         }
 
         // 分类 Tabs
         val tabY = searchY + 20
-        ctx.fill(x + 4, tabY, x + W - 4, tabY + 20, 0x18000000.toInt())
+        ctx.fill(x.toInt() + 4, tabY.toInt(), (x + W - 4).toInt(), (tabY + 20).toInt(), 0x18000000.toInt())
         for (i in cats.indices) {
             val tx = x + 8 + i * tabW
             val sel = i == cat
             if (sel) {
-                ctx.fill(tx, tabY, tx + tabW - 2, tabY + 20, accent)
-                ctx.fill(tx, tabY + 18, tx + tabW - 2, tabY + 20, 0xFF2A5DB0.toInt())
-            } else if (mx in tx..(tx + tabW - 2) && my in tabY..(tabY + 20)) {
-                ctx.fill(tx, tabY, tx + tabW - 2, tabY + 20, 0x20FFFFFF.toInt())
+                ctx.fill(tx.toInt(), tabY.toInt(), (tx + tabW - 2).toInt(), (tabY + 20).toInt(), accent)
+                ctx.fill(tx.toInt(), (tabY + 18).toInt(), (tx + tabW - 2).toInt(), (tabY + 20).toInt(), 0xFF2A5DB0.toInt())
+            } else if (mx in tx.toInt()..(tx + tabW - 2).toInt() && my in tabY.toInt()..(tabY + 20).toInt()) {
+                ctx.fill(tx.toInt(), tabY.toInt(), (tx + tabW - 2).toInt(), (tabY + 20).toInt(), 0x20FFFFFF.toInt())
             }
             val tagStr = trimText(f, cats[i].tag, tabW - 4)
             val cw = f.width(tagStr)
-            ctx.drawString(f, tagStr, tx + ((tabW - 2) - cw) / 2, tabY + 4, if (sel) -1 else textGray)
+            ctx.drawString(f, tagStr, tx.toInt() + ((tabW - 2) - cw) / 2, tabY.toInt() + 4, if (sel) -1 else textGray)
         }
 
         val divY = tabY + 22
-        ctx.fill(x + 8, divY, x + W - 8, divY + 1, 0x20FFFFFF.toInt())
+        ctx.fill(x.toInt() + 8, divY.toInt(), (x + W - 8).toInt(), (divY + 1).toInt(), 0x20FFFFFF.toInt())
 
         // 模块列表绘制
         val mods = getMods()
@@ -176,22 +221,22 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             val my2 = listY + i * rowH - sOff
             if (my2 < listY - rowH || my2 > listY + listH) continue
             val mi = my2.toInt()
-            val hov = mx in (x + 8)..listRight && my in mi..(mi + rowH)
+            val hov = mx in (x.toInt() + 8)..listRight.toInt() && my in mi..(mi + rowH)
 
-            if (hov) ctx.fill(x + 8, mi, listRight, mi + rowH, 0x14FFFFFF.toInt())
+            if (hov) ctx.fill(x.toInt() + 8, mi, listRight.toInt(), mi + rowH, 0x14FFFFFF.toInt())
             if (flash > 0f && flashRow == i) {
                 val fa = (flash * 80).toInt()
-                ctx.fill(x + 8, mi, listRight, mi + rowH, (fa shl 24) or 0x00FFFFFF)
+                ctx.fill(x.toInt() + 8, mi, listRight.toInt(), mi + rowH, (fa shl 24) or 0x00FFFFFF)
             }
 
             val isExpandedMod = expanded == mod
-            val nameText = trimText(f, (if (isExpandedMod) "§n" else "") + mod.name, listRight - x - 45)
-            ctx.drawString(f, nameText, x + 14, mi + 3, if (mod.enabled) accent else textGray)
+            val nameText = trimText(f, (if (isExpandedMod) "§n" else "") + mod.name, (listRight - x - 45).toInt())
+            ctx.drawString(f, nameText, x.toInt() + 14, mi + 3, if (mod.enabled) accent else textGray)
 
             // Switch 开关
             val switchW = 24
             val switchH = 12
-            val btnX = listRight - switchW - 4
+            val btnX = listRight.toInt() - switchW - 4
             val btnY = mi + (rowH - switchH) / 2
 
             if (mod.enabled) {
@@ -210,12 +255,10 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             val py = listY
             val maxTextW = panelW - 16
 
-            ctx.fill(px, py, x + W - 2, y + H - 2, panelBg)
-            
-            // 已完全按要求删除右侧顶部的蓝字模块名标题！
+            fillRoundedRect(ctx, px, py, x + W - 2, y + H - 2, 4f, panelBg)
 
             val setList = exp.collectValuesRecursively()
-            val setY = py + 4 // 由于删除了顶部模块名标题，起始偏移提升
+            val setY = py + 4
             val setH = H - (setY - y) - 6
 
             var totalContentH = 0f
@@ -236,24 +279,15 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                     try {
                         val valObj = v.get()
                         when {
-                            // 1. 开关 (Boolean)
                             valObj is Boolean -> {
                                 val text = trimText(f, "${v.name}: ${if (valObj) "§aON" else "§cOFF"}", maxTextW)
-                                ctx.drawString(f, text, px + 8, mi2 + 2, -1)
+                                ctx.drawString(f, text, px.toInt() + 8, mi2 + 2, -1)
                             }
-
-                            // 2. 区间数值滑条 / 单数值滑条 (CPS / Range / Number)
                             isSlider -> {
-                                var fv = 0f
-                                var mn = 0f
-                                var mxr = 20f
-
+                                var fv = 0f; var mn = 0f; var mxr = 20f
                                 if (valObj is ClosedRange<*>) {
-                                    val start = (valObj.start as? Number)?.toFloat() ?: 0f
-                                    val end = (valObj.endInclusive as? Number)?.toFloat() ?: 20f
-                                    fv = end
-                                    mn = 1f
-                                    mxr = 30f
+                                    fv = (valObj.endInclusive as? Number)?.toFloat() ?: 20f
+                                    mn = 1f; mxr = 30f
                                 } else if (valObj is Number) {
                                     fv = valObj.toFloat()
                                     if (v is RangedValue<*>) {
@@ -263,21 +297,19 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                                 }
 
                                 val bw = panelW - 16; val bh = 4
-                                val bx = px + 8; val by = mi2 + 11
+                                val bx = px.toInt() + 8; val by = mi2 + 11
                                 ctx.fill(bx, by, bx + bw, by + bh, 0x30000000.toInt())
                                 val r = ((fv - mn) / max(0.001f, mxr - mn)).coerceIn(0f, 1f)
                                 ctx.fill(bx, by, (bx + bw * r).toInt(), by + bh, accent)
 
                                 val dispVal = if (valObj is ClosedRange<*>) "${valObj.start} - ${valObj.endInclusive}" else "%.1f".format(fv)
                                 val text = trimText(f, "${v.name}: $dispVal", maxTextW)
-                                ctx.drawString(f, text, px + 8, mi2, -1)
+                                ctx.drawString(f, text, px.toInt() + 8, mi2, -1)
                             }
-
-                            // 3. 模式 / 枚举 / 点击切换类 (Mode / Choice / List)
                             else -> {
                                 val dispStr = valObj?.toString()?.replace("InputBind", "")?.take(20) ?: "None"
                                 val text = trimText(f, "${v.name}: §b$dispStr", maxTextW)
-                                ctx.drawString(f, text, px + 8, mi2 + 2, -1)
+                                ctx.drawString(f, text, px.toInt() + 8, mi2 + 2, -1)
                             }
                         }
                     } catch (_: Exception) {}
@@ -338,7 +370,6 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             }
         }
 
-        // 右侧设置项交互处理
         val exp = expanded
         if (exp != null && btn == 0) {
             val px = x + W - panelW - 2
@@ -358,13 +389,10 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                         try {
                             val valObj = v.get()
                             when {
-                                // 1. 开关 (Boolean) 切换
                                 valObj is Boolean -> {
                                     @Suppress("UNCHECKED_CAST")
                                     (v as Value<Boolean>).set(!valObj)
                                 }
-
-                                // 2. 数值 / 区间滑条调整
                                 isSlider -> {
                                     var mn = 0f; var mxr = 20f
                                     if (valObj is ClosedRange<*>) {
@@ -390,8 +418,6 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                                         (v as Value<Int>).set(nv.toInt())
                                     }
                                 }
-
-                                // 3. 点击切换模式（单点/蝴蝶点/更多模式）
                                 else -> {
                                     toggleNextValue(v)
                                 }
@@ -453,7 +479,7 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                 var cp: Int? = null
 
                 for (m in cls.methods) {
-                    if (m.parameterCount == 0 && (m.name.equals("codepoint", true) || m.name.equals("codePoint", true) || m.name.equals("character", true))) {
+                    if (m.parameterCount == 0 && (m.name.equals("codepoint", true) || m.name.equals("codePoint", true) || m.nae.equals("codePoint", true) || m.name.equals("character", true))) {
                         val res = m.invoke(obj)
                         if (res is Int) cp = res
                         else if (res is Char) cp = res.code
