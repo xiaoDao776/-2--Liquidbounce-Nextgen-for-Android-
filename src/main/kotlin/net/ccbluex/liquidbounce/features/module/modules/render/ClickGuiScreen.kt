@@ -308,11 +308,38 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
 
     override fun charTyped(characterEvent: CharacterEvent): Boolean {
         if (searchFocus) {
-            val str = characterEvent.toCodePoint().toChar().toString()
-            if (str.isNotBlank() || str == " ") {
-                search += str
-                return true
-            }
+            try {
+                // 通过反射兼容不同映射表的 character/codepoint 访问
+                val obj: Any = characterEvent
+                val cls = obj.javaClass
+                var cp: Int? = null
+
+                for (m in cls.methods) {
+                    if (m.parameterCount == 0 && (m.name.equals("codepoint", true) || m.name.equals("codePoint", true) || m.name.equals("character", true))) {
+                        val res = m.invoke(obj)
+                        if (res is Int) cp = res
+                        else if (res is Char) cp = res.code
+                        if (cp != null) break
+                    }
+                }
+
+                if (cp == null) {
+                    for (f in cls.declaredFields) {
+                        if (f.type == Int::class.javaPrimitiveType || f.type == Char::class.javaPrimitiveType) {
+                            f.isAccessible = true
+                            val v = f.get(obj)
+                            if (v is Int) cp = v
+                            else if (v is Char) cp = v.code
+                            if (cp != null) break
+                        }
+                    }
+                }
+
+                if (cp != null && cp > 31) {
+                    search += cp.toChar().toString()
+                    return true
+                }
+            } catch (_: Exception) {}
         }
         return super.charTyped(characterEvent)
     }
