@@ -1,4 +1,4 @@
-tures.module.modules.render
+package net.ccbluex.liquidbounce.features.module.modules.render
 
 import net.ccbluex.liquidbounce.config.types.RangedValue
 import net.ccbluex.liquidbounce.config.types.Value
@@ -22,9 +22,7 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
     private var searchFocus = false
     private var sOff = 5f; private var tOff = 5f
     private var sOff2 = 5f; private var tOff2 = 5f
-    private var pm = false
     private var anim = 0f
-    private var clickButton = 0
     private var flash = 0f
     private var flashRow = -1
 
@@ -54,10 +52,12 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         val f = minecraft!!.font
         val tabW = (W - 24) / cats.size
 
+        // 背景与标题
         ctx.fill(x, y, x + W, y + H, bg)
         ctx.fill(x, y, x + W, y + 24, headerBg)
         ctx.drawString(f, "§lClickGUI", x + 10, y + 5, accent)
 
+        // 搜索框
         val searchY = y + 28
         ctx.fill(x + 8, searchY, x + W - 8, searchY + 15, 0x28000000.toInt())
         val disp = if (search.isEmpty()) "§7Search modules..." else "§f$search"
@@ -67,6 +67,7 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             ctx.fill(cx, searchY + 2, cx + 1, searchY + 13, 0xFFFFFFFF.toInt())
         }
 
+        // 分类 Tabs
         val tabY = searchY + 20
         ctx.fill(x + 4, tabY, x + W - 4, tabY + 20, 0x18000000.toInt())
         for (i in cats.indices) {
@@ -85,6 +86,7 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         val divY = tabY + 22
         ctx.fill(x + 8, divY, x + W - 8, divY + 1, 0x20FFFFFF.toInt())
 
+        // 模块列表绘制
         val mods = getMods()
         val listRight = x + W - panelW - 8
         val listY = divY + 6
@@ -107,11 +109,14 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                 ctx.fill(x + 8, mi, listRight, mi + rowH, (fa shl 24) or 0x00FFFFFF)
             }
 
-            ctx.drawString(f, mod.name, x + 14, mi + 3, if (mod.enabled) accent else textGray)
+            // 模块名称
+            val isExpandedMod = expanded == mod
+            ctx.drawString(f, (if (isExpandedMod) "§n" else "") + mod.name, x + 14, mi + 3, if (mod.enabled) accent else textGray)
 
+            // 圆角风格 Toggle 开关 (宽 24px, 高 12px)
             val switchW = 24
             val switchH = 12
-            val btnX = listRight - switchW - 6
+            val btnX = listRight - switchW - 4
             val btnY = mi + (rowH - switchH) / 2
 
             if (mod.enabled) {
@@ -121,18 +126,9 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                 ctx.fill(btnX, btnY, btnX + switchW, btnY + switchH, 0x30FFFFFF.toInt())
                 ctx.fill(btnX + 2, btnY + 2, btnX + 10, btnY + switchH - 2, 0xAA808080.toInt())
             }
-
-            if (hov && !pm && clickButton != 0) {
-                if (clickButton == 0 && mx >= btnX && mx <= btnX + switchW) {
-                    mod.enabled = !mod.enabled
-                    flash = 1f; flashRow = i
-                } else if (clickButton == 1) {
-                    expanded = if (expanded == mod) null else mod
-                    flash = 1f; flashRow = i
-                }
-            }
         }
 
+        // 右侧设置菜单绘制
         val exp = expanded
         if (exp != null) {
             val px = x + W - panelW - 2
@@ -155,8 +151,6 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                     when (val iv = v.get()) {
                         is Boolean -> {
                             ctx.drawString(f, "${v.name}: ${if (iv) "§aON" else "§cOFF"}", px + 8, mi2 + 2, -1)
-                            if (!pm && clickButton == 0 && mx in px..(px + panelW) && my in mi2..(mi2 + 18))
-                                (v as Value<Boolean>).set(!iv)
                         }
                         is Number -> {
                             val fv = iv.toFloat()
@@ -168,51 +162,115 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                             val r = ((fv - mn) / (mxr - mn)).coerceIn(0f, 1f)
                             ctx.fill(bx, by, (bx + bw * r).toInt(), by + bh, accent)
                             ctx.drawString(f, "${v.name}: ${"%.1f".format(fv)}", px + 8, mi2, -1)
-                            if (!pm && clickButton == 0 && mx in bx..(bx + bw) && my in by..(by + bh)) {
-                                val nr = ((mx - bx).toFloat() / bw).coerceIn(0f, 1f)
-                                val nv = mn + nr * (mxr - mn)
-                                if (iv is Float) (v as Value<Float>).set(nv)
-                                else if (iv is Int) (v as Value<Int>).set(nv.toInt())
-                            }
                         }
                     }
                 } catch (_: Exception) {}
                 idx++
             }
         }
-
-        pm = true
     }
 
     override fun renderBackground(ctx: GuiGraphics, mx: Int, my: Int, dt: Float) {}
 
     override fun mouseClicked(click: MouseButtonEvent, doubled: Boolean): Boolean {
-        clickButton = click.button()
+        val btn = click.button()
         val mx = click.x.toInt(); val my = click.y.toInt()
         val x = (minecraft!!.window.guiScaledWidth - W) / 2
         val y = (minecraft!!.window.guiScaledHeight - H) / 2
         val tabW = (W - 24) / cats.size
 
-        if (mx in (x + 8)..(x + W - 8) && my in (y + 28)..(y + 43)) { searchFocus = true; return true }
-        if (mx !in (x + 8)..(x + W - 8) || my !in (y + 8)..(y + H - 8)) searchFocus = false
+        // 1. 搜索框点击
+        if (mx in (x + 8)..(x + W - 8) && my in (y + 28)..(y + 43)) { 
+            searchFocus = true
+            return true 
+        }
+        searchFocus = false
 
-        if (clickButton == 0) {
-            val tabY = y + 48
+        // 2. 分类 Tab 点击 (仅左键)
+        val tabY = y + 48
+        if (btn == 0 && my in tabY..(tabY + 20)) {
             for (i in cats.indices) {
                 val tx = x + 8 + i * tabW
-                if (mx in tx..(tx + tabW) && my in tabY..(tabY + 20)) { cat = i; sOff = 5f; tOff = 5f; expanded = null; return true }
+                if (mx in tx..(tx + tabW)) {
+                    cat = i
+                    sOff = 5f; tOff = 5f
+                    expanded = null
+                    return true
+                }
             }
         }
-        return false
-    }
 
-    override fun mouseReleased(click: MouseButtonEvent): Boolean { pm = false; clickButton = 0; return true }
+        val divY = tabY + 22
+        val listY = divY + 6
+        val listH = H - (listY - y) - 8
+        val listRight = x + W - panelW - 8
+        val rowH = 18
+
+        // 3. 模块列表点击 (左键开关/右键展开)
+        if (mx in (x + 8)..listRight && my in listY..(listY + listH)) {
+            val mods = getMods()
+            val clickIdx = ((my - listY + sOff) / rowH).toInt()
+
+            if (clickIdx in mods.indices) {
+                val mod = mods[clickIdx]
+                if (btn == 0) {
+                    mod.enabled = !mod.enabled
+                    flash = 1f; flashRow = clickIdx
+                } else if (btn == 1) {
+                    expanded = if (expanded == mod) null else mod
+                    flash = 1f; flashRow = clickIdx
+                }
+                return true
+            }
+        }
+
+        // 4. 右侧设置项点击
+        val exp = expanded
+        if (exp != null && btn == 0) {
+            val px = x + W - panelW - 2
+            val py = listY
+            val setY = py + 14
+            val setH = H - (setY - y) - 6
+
+            if (mx in px..(px + panelW) && my in setY..(setY + setH)) {
+                val setList = exp.collectValuesRecursively()
+                val clickIdx = ((my - setY + sOff2) / 18f).toInt()
+
+                if (clickIdx in setList.indices) {
+                    val v = setList[clickIdx]
+                    try {
+                        when (val iv = v.get()) {
+                            is Boolean -> {
+                                (v as Value<Boolean>).set(!iv)
+                            }
+                            is Number -> {
+                                val mn = if (v is RangedValue<*>) (v.range.start as? Number)?.toFloat() ?: 0f else 0f
+                                val mxr = if (v is RangedValue<*>) (v.range.endInclusive as? Number)?.toFloat() ?: 100f else 100f
+                                val bw = panelW - 16
+                                val bx = px + 8
+                                val nr = ((mx - bx).toFloat() / bw).coerceIn(0f, 1f)
+                                val nv = mn + nr * (mxr - mn)
+                                if (iv is Float) (v as Value<Float>).set(nv)
+                                else if (iv is Int) (v as Value<Int>).set(nv.toInt())
+                            }
+                        }
+                    } catch (_: Exception) {}
+                    return true
+                }
+            }
+        }
+
+        return super.mouseClicked(click, doubled)
+    }
 
     override fun mouseScrolled(mx: Double, my: Double, h: Double, v: Double): Boolean {
         val x = (minecraft!!.window.guiScaledWidth - W) / 2
         val panelX = x + W - panelW - 2
-        if (expanded != null && mx >= panelX) tOff2 = (tOff2 - v.toFloat() * 18f).coerceAtLeast(5f)
-        else tOff = (tOff - v.toFloat() * 18f).coerceAtLeast(5f)
+        if (expanded != null && mx >= panelX) {
+            tOff2 = (tOff2 - v.toFloat() * 18f).coerceAtLeast(5f)
+        } else {
+            tOff = (tOff - v.toFloat() * 18f).coerceAtLeast(5f)
+        }
         return true
     }
 
@@ -232,6 +290,40 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
     }
 
     override fun charTyped(characterEvent: CharacterEvent): Boolean {
+        if (searchFocus) {
+            try {
+                val c = characterEvent.javaClass.getMethod("character").invoke(characterEvent)
+                search += when (c) {
+                    is Char -> c.toString()
+                    is Int -> c.toChar().toString()
+                    is String -> c
+                    else -> ""
+                }
+            } catch (e: Exception) {
+                try {
+                    val c2 = characterEvent.javaClass.getMethod("codePoint").invoke(characterEvent)
+                    search += when (c2) {
+                        is Int -> c2.toChar().toString()
+                        is Char -> c2.toString()
+                        else -> ""
+                    }
+                } catch (e2: Exception) {}
+            }
+            return true
+        }
+        return false
+    }
+
+    override fun onClose() { minecraft?.setScreen(null); anim = 0f }
+
+    private fun getMods(): List<ClientModule> {
+        val catObj = cats.getOrElse(cat) { ModuleCategories.COMBAT }
+        return ModuleManager.getModules()
+            .filter { it.category == catObj && it.name != "ClickGUI" }
+            .filter { search.isEmpty() || it.name.contains(search, ignoreCase = true) }
+    }
+}
+ean {
         if (searchFocus) {
             try {
                 val c = characterEvent.javaClass.getMethod("character").invoke(characterEvent)
