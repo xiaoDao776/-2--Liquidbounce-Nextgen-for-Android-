@@ -1,4 +1,4 @@
-package net.ccbluex.liquidbounce.features.module.modules.render
+tures.module.modules.render
 
 import net.ccbluex.liquidbounce.config.types.RangedValue
 import net.ccbluex.liquidbounce.config.types.Value
@@ -109,19 +109,21 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
 
             ctx.drawString(f, mod.name, x + 14, mi + 3, if (mod.enabled) accent else textGray)
 
-            val btnX = listRight - 22
+            val switchW = 24
+            val switchH = 12
+            val btnX = listRight - switchW - 6
+            val btnY = mi + (rowH - switchH) / 2
+
             if (mod.enabled) {
-                ctx.fill(btnX, mi + 2, btnX + 14, mi + 16, accent)
-                val tw = f.width("ON")
-                ctx.drawString(f, "ON", btnX + (14 - tw) / 2, mi + 3, -1)
+                ctx.fill(btnX, btnY, btnX + switchW, btnY + switchH, accent)
+                ctx.fill(btnX + switchW - 10, btnY + 2, btnX + switchW - 2, btnY + switchH - 2, 0xFFFFFFFF.toInt())
             } else {
-                ctx.fill(btnX, mi + 2, btnX + 14, mi + 16, 0x30FFFFFF.toInt())
-                val tw2 = f.width("OFF")
-                ctx.drawString(f, "OFF", btnX + (14 - tw2) / 2, mi + 3, textGray)
+                ctx.fill(btnX, btnY, btnX + switchW, btnY + switchH, 0x30FFFFFF.toInt())
+                ctx.fill(btnX + 2, btnY + 2, btnX + 10, btnY + switchH - 2, 0xAA808080.toInt())
             }
 
             if (hov && !pm && clickButton != 0) {
-                if (clickButton == 0 && mx > btnX) {
+                if (clickButton == 0 && mx >= btnX && mx <= btnX + switchW) {
                     mod.enabled = !mod.enabled
                     flash = 1f; flashRow = i
                 } else if (clickButton == 1) {
@@ -233,6 +235,37 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         if (searchFocus) {
             try {
                 val c = characterEvent.javaClass.getMethod("character").invoke(characterEvent)
+                search += when (c) {
+                    is Char -> c.toString()
+                    is Int -> c.toChar().toString()
+                    is String -> c
+                    else -> ""
+                }
+            } catch (e: Exception) {
+                try {
+                    val c2 = characterEvent.javaClass.getMethod("codePoint").invoke(characterEvent)
+                    search += when (c2) {
+                        is Int -> c2.toChar().toString()
+                        is Char -> c2.toString()
+                        else -> ""
+                    }
+                } catch (e2: Exception) {}
+            }
+            return true
+        }
+        return false
+    }
+
+    override fun onClose() { minecraft?.setScreen(null); anim = 0f }
+
+    private fun getMods(): List<ClientModule> {
+        val catObj = cats.getOrElse(cat) { ModuleCategories.COMBAT }
+        return ModuleManager.getModules()
+            .filter { it.category == catObj && it.name != "ClickGUI" }
+            .filter { search.isEmpty() || it.name.contains(search, ignoreCase = true) }
+    }
+}
+tMethod("character").invoke(characterEvent)
                 search += when (c) {
                     is Char -> c.toString()
                     is Int -> c.toChar().toString()
