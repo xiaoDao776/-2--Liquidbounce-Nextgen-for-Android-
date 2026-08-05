@@ -109,11 +109,10 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                 ctx.fill(x + 8, mi, listRight, mi + rowH, (fa shl 24) or 0x00FFFFFF)
             }
 
-            // 模块名称
             val isExpandedMod = expanded == mod
             ctx.drawString(f, (if (isExpandedMod) "§n" else "") + mod.name, x + 14, mi + 3, if (mod.enabled) accent else textGray)
 
-            // 圆角风格 Toggle 开关 (宽 24px, 高 12px)
+            // Switch 开关
             val switchW = 24
             val switchH = 12
             val btnX = listRight - switchW - 4
@@ -128,7 +127,7 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             }
         }
 
-        // 右侧设置菜单绘制
+        // 右侧设置项绘制
         val exp = expanded
         if (exp != null) {
             val px = x + W - panelW - 2
@@ -179,14 +178,14 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         val y = (minecraft!!.window.guiScaledHeight - H) / 2
         val tabW = (W - 24) / cats.size
 
-        // 1. 搜索框点击
-        if (mx in (x + 8)..(x + W - 8) && my in (y + 28)..(y + 43)) { 
+        // 点击搜索框
+        if (mx in (x + 8)..(x + W - 8) && my in (y + 28)..(y + 43)) {
             searchFocus = true
-            return true 
+            return true
         }
         searchFocus = false
 
-        // 2. 分类 Tab 点击 (仅左键)
+        // 点击 Tab
         val tabY = y + 48
         if (btn == 0 && my in tabY..(tabY + 20)) {
             for (i in cats.indices) {
@@ -206,7 +205,7 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         val listRight = x + W - panelW - 8
         val rowH = 18
 
-        // 3. 模块列表点击 (左键开关/右键展开)
+        // 点击模块
         if (mx in (x + 8)..listRight && my in listY..(listY + listH)) {
             val mods = getMods()
             val clickIdx = ((my - listY + sOff) / rowH).toInt()
@@ -224,7 +223,7 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             }
         }
 
-        // 4. 右侧设置项点击
+        // 点击右侧设置
         val exp = expanded
         if (exp != null && btn == 0) {
             val px = x + W - panelW - 2
@@ -241,6 +240,7 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                     try {
                         when (val iv = v.get()) {
                             is Boolean -> {
+                                @Suppress("UNCHECKED_CAST")
                                 (v as Value<Boolean>).set(!iv)
                             }
                             is Number -> {
@@ -250,8 +250,13 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                                 val bx = px + 8
                                 val nr = ((mx - bx).toFloat() / bw).coerceIn(0f, 1f)
                                 val nv = mn + nr * (mxr - mn)
-                                if (iv is Float) (v as Value<Float>).set(nv)
-                                else if (iv is Int) (v as Value<Int>).set(nv.toInt())
+                                if (iv is Float) {
+                                    @Suppress("UNCHECKED_CAST")
+                                    (v as Value<Float>).set(nv)
+                                } else if (iv is Int) {
+                                    @Suppress("UNCHECKED_CAST")
+                                    (v as Value<Int>).set(nv.toInt())
+                                }
                             }
                         }
                     } catch (_: Exception) {}
@@ -275,111 +280,47 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
     }
 
     override fun keyPressed(input: KeyEvent): Boolean {
-        if (input.key == GLFW.GLFW_KEY_ESCAPE) { onClose(); return true }
+        if (input.key == GLFW.GLFW_KEY_ESCAPE) {
+            onClose()
+            return true
+        }
         if (searchFocus) {
             when (input.key) {
-                GLFW.GLFW_KEY_BACKSPACE -> { if (search.isNotEmpty()) search = search.dropLast(1); return true }
-                GLFW.GLFW_KEY_SPACE -> { search += " "; return true }
+                GLFW.GLFW_KEY_BACKSPACE -> {
+                    if (search.isNotEmpty()) search = search.dropLast(1)
+                    return true
+                }
+                GLFW.GLFW_KEY_SPACE -> {
+                    search += " "
+                    return true
+                }
                 else -> {
                     val n = GLFW.glfwGetKeyName(input.key, 0)
-                    if (n != null && n.length == 1) { search += n; return true }
+                    if (n != null && n.length == 1) {
+                        search += n
+                        return true
+                    }
                 }
             }
         }
-        return false
+        return super.keyPressed(input)
     }
 
     override fun charTyped(characterEvent: CharacterEvent): Boolean {
         if (searchFocus) {
-            try {
-                val c = characterEvent.javaClass.getMethod("character").invoke(characterEvent)
-                search += when (c) {
-                    is Char -> c.toString()
-                    is Int -> c.toChar().toString()
-                    is String -> c
-                    else -> ""
-                }
-            } catch (e: Exception) {
-                try {
-                    val c2 = characterEvent.javaClass.getMethod("codePoint").invoke(characterEvent)
-                    search += when (c2) {
-                        is Int -> c2.toChar().toString()
-                        is Char -> c2.toString()
-                        else -> ""
-                    }
-                } catch (e2: Exception) {}
+            val str = characterEvent.toCodePoint().toChar().toString()
+            if (str.isNotBlank() || str == " ") {
+                search += str
+                return true
             }
-            return true
         }
-        return false
+        return super.charTyped(characterEvent)
     }
 
-    override fun onClose() { minecraft?.setScreen(null); anim = 0f }
-
-    private fun getMods(): List<ClientModule> {
-        val catObj = cats.getOrElse(cat) { ModuleCategories.COMBAT }
-        return ModuleManager.getModules()
-            .filter { it.category == catObj && it.name != "ClickGUI" }
-            .filter { search.isEmpty() || it.name.contains(search, ignoreCase = true) }
+    override fun onClose() {
+        minecraft?.setScreen(null)
+        anim = 0f
     }
-}
-ean {
-        if (searchFocus) {
-            try {
-                val c = characterEvent.javaClass.getMethod("character").invoke(characterEvent)
-                search += when (c) {
-                    is Char -> c.toString()
-                    is Int -> c.toChar().toString()
-                    is String -> c
-                    else -> ""
-                }
-            } catch (e: Exception) {
-                try {
-                    val c2 = characterEvent.javaClass.getMethod("codePoint").invoke(characterEvent)
-                    search += when (c2) {
-                        is Int -> c2.toChar().toString()
-                        is Char -> c2.toString()
-                        else -> ""
-                    }
-                } catch (e2: Exception) {}
-            }
-            return true
-        }
-        return false
-    }
-
-    override fun onClose() { minecraft?.setScreen(null); anim = 0f }
-
-    private fun getMods(): List<ClientModule> {
-        val catObj = cats.getOrElse(cat) { ModuleCategories.COMBAT }
-        return ModuleManager.getModules()
-            .filter { it.category == catObj && it.name != "ClickGUI" }
-            .filter { search.isEmpty() || it.name.contains(search, ignoreCase = true) }
-    }
-}
-tMethod("character").invoke(characterEvent)
-                search += when (c) {
-                    is Char -> c.toString()
-                    is Int -> c.toChar().toString()
-                    is String -> c
-                    else -> ""
-                }
-            } catch (e: Exception) {
-                try {
-                    val c2 = characterEvent.javaClass.getMethod("codePoint").invoke(characterEvent)
-                    search += when (c2) {
-                        is Int -> c2.toChar().toString()
-                        is Char -> c2.toString()
-                        else -> ""
-                    }
-                } catch (e2: Exception) {}
-            }
-            return true
-        }
-        return false
-    }
-
-    override fun onClose() { minecraft?.setScreen(null); anim = 0f }
 
     private fun getMods(): List<ClientModule> {
         val catObj = cats.getOrElse(cat) { ModuleCategories.COMBAT }
