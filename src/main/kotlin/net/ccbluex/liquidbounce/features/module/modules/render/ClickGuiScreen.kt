@@ -79,7 +79,7 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                 ctx.fill(tx, tabY, tx + tabW - 2, tabY + 20, 0x20FFFFFF.toInt())
             }
             val cw = f.width(cats[i].tag)
-            ctx.drawString(f, cats[i].tag, tx + (tabW - cw) / 2, tabY + 4, if (sel) -1 else textGray)
+            ctx.drawString(f, cats[i].tag, tx + ((tabW - 2) - cw) / 2, tabY + 4, if (sel) -1 else textGray)
         }
 
         val divY = tabY + 22
@@ -112,14 +112,16 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             val btnX = listRight - 22
             if (mod.enabled) {
                 ctx.fill(btnX, mi + 2, btnX + 14, mi + 16, accent)
-                ctx.drawString(f, "ON", btnX + 1, mi + 3, -1)
+                val tw = f.width("ON")
+                ctx.drawString(f, "ON", btnX + (14 - tw) / 2, mi + 3, -1)
             } else {
                 ctx.fill(btnX, mi + 2, btnX + 14, mi + 16, 0x30FFFFFF.toInt())
-                ctx.drawString(f, "OFF", btnX - 1, mi + 3, textGray)
+                val tw2 = f.width("OFF")
+                ctx.drawString(f, "OFF", btnX + (14 - tw2) / 2, mi + 3, textGray)
             }
 
-            if (hov && !pm) {
-                if (clickButton == 0) {
+            if (hov && !pm && clickButton != 0) {
+                if (clickButton == 0 && mx > btnX) {
                     mod.enabled = !mod.enabled
                     flash = 1f; flashRow = i
                 } else if (clickButton == 1) {
