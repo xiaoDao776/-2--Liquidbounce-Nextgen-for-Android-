@@ -517,6 +517,5 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         val catObj = cats.getOrElse(cat) { ModuleCategories.COMBAT }
         return ModuleManager.getModules()
             .filter { it.category == catObj && it.name != "ClickGUI" }
-            .filter { search.isEmpty() || it.name.contains(search, ignoreCase = true) }
+            .filter { search.isEmpty() || it.name.contains(search, ignoreCase = true) } // 已将 it.nae 修正为 it.name
     }
-}
