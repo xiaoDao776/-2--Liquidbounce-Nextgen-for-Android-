@@ -5,6 +5,7 @@ import net.ccbluex.liquidbounce.config.types.Value
 import net.ccbluex.liquidbounce.features.module.ClientModule
 import net.ccbluex.liquidbounce.features.module.ModuleCategories
 import net.ccbluex.liquidbounce.features.module.ModuleManager
+import net.minecraft.client.gui.Font
 import net.minecraft.client.gui.GuiGraphics
 import net.minecraft.client.gui.screens.Screen
 import net.minecraft.client.input.CharacterEvent
@@ -39,6 +40,40 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
     override fun isPauseScreen() = false
     override fun shouldCloseOnEsc() = true
 
+    /**
+     * 将长文本截断以防止跑出右侧 GUI 边界
+     */
+    private fun trimText(font: Font, text: String, maxW: Int): String {
+        if (font.width(text) <= maxW) return text
+        var str = text
+        while (str.isNotEmpty() && font.width("$str...") > maxW) {
+            str = str.substring(0, str.length - 1)
+        }
+        return "$str..."
+    }
+
+    /**
+     * 优雅格式化各种 Complex/Value 类型为简短字符串
+     */
+    private fun formatValueDisplay(v: Value<*>): String {
+        val valObj = v.get() ?: return "null"
+        val valStr = valObj.toString()
+        
+        // 专门处理 KeyBind 对象，避免输出 InputBind(boundKey=...)
+        if (valStr.contains("boundKey=")) {
+            val keyPart = valStr.substringAfter("boundKey=").substringBefore(",").substringBefore(")")
+            return keyPart.replace("key.keyboard.", "").uppercase()
+        }
+        
+        // 专门处理简单对象数组或长映射
+        if (valStr.contains("[")) {
+            val shortStr = valStr.substringBefore("[")
+            if (shortStr.isNotBlank()) return shortStr
+        }
+        
+        return valStr
+    }
+
     override fun render(ctx: GuiGraphics, mx: Int, my: Int, dt: Float) {
         anim += (1f - anim) * 0.25f
         val a = anim.coerceIn(0f, 1f)
@@ -61,10 +96,12 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         val searchY = y + 28
         ctx.fill(x + 8, searchY, x + W - 8, searchY + 15, 0x28000000.toInt())
         val disp = if (search.isEmpty()) "§7Search modules..." else "§f$search"
-        ctx.drawString(f, disp, x + 12, searchY + 2, -1)
+        ctx.drawString(f, trimText(f, disp, W - 30), x + 12, searchY + 2, -1)
         if (searchFocus) {
             val cx = x + 12 + f.width(search)
-            ctx.fill(cx, searchY + 2, cx + 1, searchY + 13, 0xFFFFFFFF.toInt())
+            if (cx < x + W - 12) {
+                ctx.fill(cx, searchY + 2, cx + 1, searchY + 13, 0xFFFFFFFF.toInt())
+            }
         }
 
         // 分类 Tabs
@@ -79,8 +116,9 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             } else if (mx in tx..(tx + tabW - 2) && my in tabY..(tabY + 20)) {
                 ctx.fill(tx, tabY, tx + tabW - 2, tabY + 20, 0x20FFFFFF.toInt())
             }
-            val cw = f.width(cats[i].tag)
-            ctx.drawString(f, cats[i].tag, tx + ((tabW - 2) - cw) / 2, tabY + 4, if (sel) -1 else textGray)
+            val tagStr = trimText(f, cats[i].tag, tabW - 4)
+            val cw = f.width(tagStr)
+            ctx.drawString(f, tagStr, tx + ((tabW - 2) - cw) / 2, tabY + 4, if (sel) -1 else textGray)
         }
 
         val divY = tabY + 22
@@ -110,7 +148,8 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             }
 
             val isExpandedMod = expanded == mod
-            ctx.drawString(f, (if (isExpandedMod) "§n" else "") + mod.name, x + 14, mi + 3, if (mod.enabled) accent else textGray)
+            val nameText = trimText(f, (if (isExpandedMod) "§n" else "") + mod.name, listRight - x - 45)
+            ctx.drawString(f, nameText, x + 14, mi + 3, if (mod.enabled) accent else textGray)
 
             // Switch 开关
             val switchW = 24
@@ -127,19 +166,20 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             }
         }
 
-        // 右侧设置子菜单绘制（紧凑布局修复）
+        // 右侧设置子菜单绘制（包含边界裁剪防御）
         val exp = expanded
         if (exp != null) {
             val px = x + W - panelW - 2
             val py = listY
+            val maxTextW = panelW - 16 // 设置列表最大可容纳文字宽度
+
             ctx.fill(px, py, x + W - 2, y + H - 2, panelBg)
-            ctx.drawString(f, "§l" + exp.name, px + 6, py + 3, accent)
+            ctx.drawString(f, trimText(f, "§l" + exp.name, maxTextW), px + 6, py + 3, accent)
 
             val setList = exp.collectValuesRecursively()
             val setY = py + 14
             val setH = H - (setY - y) - 6
 
-            // 计算总内容高度（数值类型需要 18px，其他需要 14px）
             var totalContentH = 0f
             for (v in setList) {
                 val valObj = v.get()
@@ -159,7 +199,8 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                     try {
                         when (valObj) {
                             is Boolean -> {
-                                ctx.drawString(f, "${v.name}: ${if (valObj) "§aON" else "§cOFF"}", px + 8, mi2 + 2, -1)
+                                val text = trimText(f, "${v.name}: ${if (valObj) "§aON" else "§cOFF"}", maxTextW)
+                                ctx.drawString(f, text, px + 8, mi2 + 2, -1)
                             }
                             is Number -> {
                                 val fv = valObj.toFloat()
@@ -170,11 +211,15 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                                 ctx.fill(bx, by, bx + bw, by + bh, 0x30000000.toInt())
                                 val r = ((fv - mn) / (mxr - mn)).coerceIn(0f, 1f)
                                 ctx.fill(bx, by, (bx + bw * r).toInt(), by + bh, accent)
-                                ctx.drawString(f, "${v.name}: ${"%.1f".format(fv)}", px + 8, mi2, -1)
+
+                                val text = trimText(f, "${v.name}: ${"%.1f".format(fv)}", maxTextW)
+                                ctx.drawString(f, text, px + 8, mi2, -1)
                             }
                             else -> {
-                                // 兜底处理所有其他设置类型（Enum/String/List等）
-                                ctx.drawString(f, "${v.name}: §7${valObj?.toString() ?: ""}", px + 8, mi2 + 2, -1)
+                                // 提取清理后的文字，并进行宽度截断
+                                val displayVal = formatValueDisplay(v)
+                                val text = trimText(f, "${v.name}: §7$displayVal", maxTextW)
+                                ctx.drawString(f, text, px + 8, mi2 + 2, -1)
                             }
                         }
                     } catch (_: Exception) {}
@@ -193,14 +238,12 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         val y = (minecraft!!.window.guiScaledHeight - H) / 2
         val tabW = (W - 24) / cats.size
 
-        // 1. 搜索框点击
         if (mx in (x + 8)..(x + W - 8) && my in (y + 28)..(y + 43)) {
             searchFocus = true
             return true
         }
         searchFocus = false
 
-        // 2. 分类 Tab 点击
         val tabY = y + 48
         if (btn == 0 && my in tabY..(tabY + 20)) {
             for (i in cats.indices) {
@@ -220,7 +263,6 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         val listRight = x + W - panelW - 8
         val rowH = 18
 
-        // 3. 模块列表点击
         if (mx in (x + 8)..listRight && my in listY..(listY + listH)) {
             val mods = getMods()
             val clickIdx = ((my - listY + sOff) / rowH).toInt()
@@ -238,7 +280,6 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             }
         }
 
-        // 4. 右侧设置项动态点击处理
         val exp = expanded
         if (exp != null && btn == 0) {
             val px = x + W - panelW - 2
