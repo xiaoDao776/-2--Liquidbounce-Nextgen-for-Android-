@@ -2,9 +2,9 @@ name: Build
 
 on:
   push:
-    branches: [ nextgen ]
+    branches: [ nextgen , 0.39 ]
   pull_request:
-    branches: [ nextgen ]
+    branches: [ nextgen, 0.39 ]
 
 jobs:
   extract-versions:
