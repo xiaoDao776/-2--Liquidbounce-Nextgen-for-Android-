@@ -26,7 +26,6 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
     private var searchFocus = false
     private var listeningValue: Value<*>? = null
 
-    // 记录被收缩/折叠的分组集合
     private val collapsedGroups = mutableSetOf<Value<*>>()
 
     private var sOff = 0f; private var tOff = 0f
@@ -68,17 +67,14 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             while (a < endAng) {
                 val rad1 = Math.toRadians(a.toDouble())
                 val rad2 = Math.toRadians((a + 10).coerceAtMost(endAng).toDouble())
-                
                 val px1 = cx + (cos(rad1) * r).toFloat()
                 val py1 = cy + (sin(rad1) * r).toFloat()
                 val px2 = cx + (cos(rad2) * r).toFloat()
                 val py2 = cy + (sin(rad2) * r).toFloat()
-
                 val minX = cx.coerceAtMost(px1).coerceAtMost(px2).toInt()
                 val maxX = cx.coerceAtLeast(px1).coerceAtLeast(px2).toInt()
                 val minY = cy.coerceAtMost(py1).coerceAtMost(py2).toInt()
                 val maxY = cy.coerceAtLeast(py1).coerceAtLeast(py2).toInt()
-
                 ctx.fill(minX, minY, max(minX + 1, maxX), max(minY + 1, maxY), color)
                 a += 10f
             }
@@ -94,59 +90,51 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         return "$str..."
     }
 
-    /**
-     * 判断一个 Value 是否是包含子项的“分组/容器”
-     */
     private fun isGroupValue(v: Value<*>): Boolean {
         val clsName = v.javaClass.simpleName
         if (clsName.contains("Group", true) || clsName.contains("Container", true)) return true
-        
-        // 判断内部是否有 sub-values / children
-        try {
-            val fields = v.javaClass.declaredFields
-            val hasChildField = fields.any { 
-                it.name.equals("values", true) || it.name.equals("subValues", true) || it.name.equals("elements", true) 
-            }
-            if (hasChildField && v.get() is Collection<*>) {
-                val coll = v.get() as Collection<*>
-                if (coll.firstOrNull() is Value<*>) return true
-            }
-        } catch (_: Exception) {}
-        return false
+        return getGroupChildren(v).isNotEmpty()
     }
 
-    /**
-     * 获取分组下的直接子元素
-     */
+    // 深度反射提取：修复分组不完整问题
     private fun getGroupChildren(v: Value<*>): List<Value<*>> {
         val list = mutableListOf<Value<*>>()
         try {
-            val obj = v.get()
-            if (obj is Collection<*>) {
-                for (item in obj) {
-                    if (item is Value<*>) list.add(item)
+            // 1. 尝试调用可能存在的 getValues() 方法
+            for (m in v.javaClass.methods) {
+                if ((m.name.equals("getValues", true) || m.name.equals("getSubValues", true)) && m.parameterCount == 0) {
+                    val res = m.invoke(v)
+                    if (res is Collection<*>) list.addAll(res.filterIsInstance<Value<*>>())
+                    if (res != null && res.javaClass.isArray) list.addAll((res as Array<*>).filterIsInstance<Value<*>>())
                 }
-            } else {
-                val fields = v.javaClass.declaredFields
-                for (f in fields) {
-                    if (f.name.equals("values", true) || f.name.equals("subValues", true)) {
+            }
+            
+            // 2. 检查 Value 本身的成员变量
+            for (f in v.javaClass.declaredFields) {
+                f.isAccessible = true
+                val fVal = f.get(v)
+                if (fVal is Value<*>) list.add(fVal)
+                else if (fVal is Collection<*>) list.addAll(fVal.filterIsInstance<Value<*>>())
+                else if (fVal != null && fVal.javaClass.isArray) list.addAll((fVal as Array<*>).filterIsInstance<Value<*>>())
+            }
+
+            // 3. 检查 Value 包装的内容对象的成员变量
+            val obj = v.get()
+            if (obj != null && obj !is Number && obj !is String && obj !is Boolean && obj !is Enum<*>) {
+                if (obj is Collection<*>) list.addAll(obj.filterIsInstance<Value<*>>())
+                else if (obj.javaClass.isArray) list.addAll((obj as Array<*>).filterIsInstance<Value<*>>())
+                else {
+                    for (f in obj.javaClass.declaredFields) {
                         f.isAccessible = true
-                        val res = f.get(v)
-                        if (res is Collection<*>) {
-                            for (item in res) {
-                                if (item is Value<*>) list.add(item)
-                            }
-                        }
+                        val fVal = f.get(obj)
+                        if (fVal is Value<*>) list.add(fVal)
                     }
                 }
             }
         } catch (_: Exception) {}
-        return list
+        return list.distinct()
     }
 
-    /**
-     * 过滤并展平所有的 Value，遇到折叠的分组自动跳过其子项
-     */
     private fun getVisibleValues(module: ClientModule): List<Pair<Value<*>, Int>> {
         val result = mutableListOf<Pair<Value<*>, Int>>()
         val topValues = module.collectValuesRecursively()
@@ -164,7 +152,6 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         }
 
         for (v in topValues) {
-            // 只处理顶层 Value（没有包含在其他 Group 里的）
             var isChildOfAny = false
             for (other in topValues) {
                 if (other != v && isGroupValue(other) && getGroupChildren(other).contains(v)) {
@@ -172,16 +159,11 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                     break
                 }
             }
-            if (!isChildOfAny) {
-                process(v, 0)
-            }
+            if (!isChildOfAny) process(v, 0)
         }
         return result
     }
 
-    /**
-     * 安全提取真实数据，绝不返回空的强转对象
-     */
     private fun getActualValue(v: Value<*>): Any? {
         var obj: Any? = try { v.get() } catch (_: Exception) { null } ?: return null
         var depth = 0
@@ -189,7 +171,6 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             obj = try { obj.get() } catch (_: Exception) { null }
             depth++
         }
-
         if (obj is Collection<*>) {
             if (obj.isEmpty()) return "NONE"
             val first = obj.firstOrNull() ?: return "NONE"
@@ -215,44 +196,26 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
 
     private fun formatDisplayValue(v: Value<*>): String {
         if (v == listeningValue) return "[LISTENING...]"
-
         val actual = getActualValue(v) ?: return "NONE"
-
         try {
             val cls = actual.javaClass
-            val keyField = cls.declaredFields.find { 
-                it.name.equals("boundKey", true) || it.name.equals("key", true) || it.name.equals("name", true) 
-            }
+            val keyField = cls.declaredFields.find { it.name.equals("boundKey", true) || it.name.equals("key", true) || it.name.equals("name", true) }
             if (keyField != null) {
                 keyField.isAccessible = true
                 val innerKey = keyField.get(actual)
                 if (innerKey != null) {
-                    val keyStr = innerKey.toString()
-                        .replace("key.keyboard.", "", ignoreCase = true)
-                        .replace("key.", "", ignoreCase = true)
-                        .uppercase()
+                    val keyStr = innerKey.toString().replace("key.keyboard.", "", ignoreCase = true).replace("key.", "", ignoreCase = true).uppercase()
                     if (keyStr.isNotEmpty()) return keyStr
                 }
             }
         } catch (_: Exception) {}
-
         var str = actual.toString()
-
         if (str.contains("Value(") || str.contains("name=")) {
             val match = Regex("""name=([^,\s\)]+)""").find(str)
-            if (match != null) {
-                return match.groupValues[1].uppercase()
-            }
+            if (match != null) return match.groupValues[1].uppercase()
         }
-
-        str = str.replace("key.keyboard.", "", ignoreCase = true)
-            .replace("key.", "", ignoreCase = true)
-            .replace("InputBind", "", ignoreCase = true)
-
-        if (str.startsWith("(") && str.endsWith(")")) {
-            str = str.substring(1, str.length - 1)
-        }
-
+        str = str.replace("key.keyboard.", "", ignoreCase = true).replace("key.", "", ignoreCase = true).replace("InputBind", "", ignoreCase = true)
+        if (str.startsWith("(") && str.endsWith(")")) str = str.substring(1, str.length - 1)
         return if (str.isBlank()) "NONE" else str.take(18).uppercase()
     }
 
@@ -272,7 +235,6 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         val valObj = getActualValue(v) ?: return Color.WHITE
         if (valObj is Color) return valObj
         if (valObj is Number) return Color(valObj.toInt(), true)
-        
         try {
             val cls = valObj.javaClass
             val rgbMethod = cls.methods.find { it.name == "getRGB" || it.name == "rgb" }
@@ -281,7 +243,6 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                 return Color(rgb, true)
             }
         } catch (_: Exception) {}
-
         return Color.WHITE
     }
 
@@ -298,24 +259,16 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         } catch (_: Exception) {}
     }
 
-    /**
-     * 安全的模式/子项轮播逻辑，防止索引溢出导致的崩溃
-     */
     private fun toggleNextValue(v: Value<*>) {
         val cls = v.javaClass
-
         try {
-            val nextMethod = cls.methods.find { 
-                (it.name == "next" || it.name == "toggle" || it.name == "setNext") && it.parameterCount == 0 
-            }
+            val nextMethod = cls.methods.find { (it.name == "next" || it.name == "toggle" || it.name == "setNext") && it.parameterCount == 0 }
             if (nextMethod != null) {
                 nextMethod.invoke(v)
                 return
             }
         } catch (_: Exception) {}
-
         val actual = getActualValue(v)
-
         if (actual is Enum<*>) {
             val constants = actual.javaClass.enumConstants
             if (constants != null && constants.isNotEmpty()) {
@@ -328,12 +281,8 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                 return
             }
         }
-
         try {
-            val choicesField = cls.declaredFields.find { 
-                it.name.equals("values", true) || it.name.equals("choices", true) || 
-                it.name.equals("modes", true) || it.name.equals("range", true) 
-            }
+            val choicesField = cls.declaredFields.find { it.name.equals("values", true) || it.name.equals("choices", true) || it.name.equals("modes", true) || it.name.equals("range", true) }
             if (choicesField != null) {
                 choicesField.isAccessible = true
                 val choices = choicesField.get(v)
@@ -360,7 +309,6 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                 }
             }
         } catch (_: Exception) {}
-
         if (actual is Boolean) {
             try {
                 @Suppress("UNCHECKED_CAST")
@@ -394,9 +342,7 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         ctx.drawString(f, trimText(f, disp, W - 30), x.toInt() + 12, searchY.toInt() + 2, -1)
         if (searchFocus) {
             val cx = x.toInt() + 12 + f.width(search)
-            if (cx < x + W - 12) {
-                ctx.fill(cx, searchY.toInt() + 2, cx + 1, searchY.toInt() + 13, 0xFFFFFFFF.toInt())
-            }
+            if (cx < x + W - 12) ctx.fill(cx, searchY.toInt() + 2, cx + 1, searchY.toInt() + 13, 0xFFFFFFFF.toInt())
         }
 
         val tabY = searchY + 20
@@ -426,6 +372,9 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
 
         tOff = max(0f, tOff.coerceAtMost(max(0f, mods.size * rowH - listH)))
         sOff += (tOff - sOff) * 0.3f * a
+
+        // 添加 Scissor 裁剪，修复左侧模块列表超出界面的问题
+        ctx.enableScissor(x.toInt(), listY.toInt(), listRight.toInt(), (listY + listH).toInt())
 
         for (i in mods.indices) {
             val mod = mods[i]
@@ -457,6 +406,7 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                 ctx.fill(btnX + 2, btnY + 2, btnX + 10, btnY + switchH - 2, 0xAA808080.toInt())
             }
         }
+        ctx.disableScissor() // 关闭左侧模块裁剪
 
         val curExp = expanded
         if (curExp != null) {
@@ -466,7 +416,6 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
 
             fillRoundedRect(ctx, px, py, x + W - 2, y + H - 2, 4f, panelBg)
 
-            // 获取过滤后的受分组折叠控制的列表
             val visibleValues = getVisibleValues(curExp)
             
             val paddingTop = 8f
@@ -500,7 +449,7 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                     else -> 16f
                 }
 
-                val indent = depth * 6 // 缩进显示层级结构
+                val indent = depth * 6
 
                 if (curY >= py - itemH && curY <= py + setH + itemH) {
                     val mi2 = curY.toInt()
@@ -510,9 +459,14 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
                             isGroup -> {
                                 val isCollapsed = collapsedGroups.contains(v)
                                 val arrow = if (isCollapsed) "§7[+]" else "§b[-]"
-                                val groupName = trimText(f, "$arrow §l${v.name}", maxTextW - indent)
                                 
-                                // 分组标题栏背景
+                                // 分组标题兜底修复：如果为 null 或空白，取截断后的类名作为标题
+                                var pureName = v.name
+                                if (pureName.isNullOrBlank() || pureName == "null") {
+                                    pureName = v.javaClass.simpleName.replace("Value", "").replace("Group", "")
+                                }
+                                
+                                val groupName = trimText(f, "$arrow §l$pureName", maxTextW - indent)
                                 ctx.fill(px.toInt() + 4 + indent, mi2, (x + W - 6).toInt(), mi2 + 16, 0x1FFFFFFF.toInt())
                                 ctx.drawString(f, groupName, px.toInt() + 8 + indent, mi2 + 3, -1)
                             }
@@ -693,7 +647,6 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
 
                     if (my >= curY && my < curY + itemH) {
                         try {
-                            // 右键或者左键点击 Group 标题：收缩/展开分组
                             if (isGroup) {
                                 if (btn == 1 || btn == 0) {
                                     if (collapsedGroups.contains(v)) {
