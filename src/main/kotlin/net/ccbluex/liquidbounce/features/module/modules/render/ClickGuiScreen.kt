@@ -156,15 +156,23 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
 
     private fun getVisibleValues(module: ClientModule): List<Pair<Value<*>, Int>> {
         val result = mutableListOf<Pair<Value<*>, Int>>()
-        val topValues = try {
+        
+        // 1. 获取原始设置项
+        val rawValues = try {
             module.collectValuesRecursively()
         } catch (e: Exception) {
             try {
-                @Suppress("UNCHECKED_CAST")
-                module.javaClass.getMethod("getValues").invoke(module) as List<Value<*>>
+                module.javaClass.getMethod("getValues").invoke(module)
             } catch (ex: Exception) {
-                emptyList()
+                emptyList<Value<*>>()
             }
+        }
+
+        // 2. 安全解析类型，确保它是一个可以遍历的 List，解决 iterator() 报错
+        val topValues = when (rawValues) {
+            is Iterable<*> -> rawValues.filterIsInstance<Value<*>>()
+            is Array<*> -> rawValues.filterIsInstance<Value<*>>()
+            else -> emptyList()
         }
 
         val visited = mutableSetOf<Value<*>>()
@@ -182,6 +190,7 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             }
         }
 
+        // 现在 topValues 是明确的 List<Value<*>>，可以正常 for 循环了
         for (v in topValues) {
             var isChildOfAny = false
             for (other in topValues) {
