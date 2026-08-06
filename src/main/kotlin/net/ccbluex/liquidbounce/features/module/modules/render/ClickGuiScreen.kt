@@ -35,13 +35,13 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
     private var flashRow = -1
 
     private val cats = ModuleCategories.entries.toList()
-    private val W = 450; private val H = 320
-    private val panelW = 170
+    private val W = 620; private val H = 430
+    private val panelW = 230
 
-    private val accent = 0xFF4182E1.toInt()
-    private val bg = 0xE80C0C10.toInt()
-    private val panelBg = 0xE814141A.toInt()
-    private val headerBg = 0xF0000000.toInt()
+    private val accent = 0xFF55E6FF.toInt()
+    private val bg = 0xC915171B.toInt()
+    private val panelBg = 0xB91A1E24.toInt()
+    private val headerBg = 0xCC101318.toInt()
     private val textGray = 0xFFA0A0AA.toInt()
 
     override fun isPauseScreen() = false
@@ -373,7 +373,7 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
         val f = minecraft!!.font
         val tabW = (W - 24) / cats.size
 
-        val R = 8f
+        val R = 14f
         fillRoundedRect(ctx, x, y, x + W, y + H, R, bg)
         
         ctx.fill(x.toInt() + R.toInt(), y.toInt(), (x + W - R).toInt(), (y + 24).toInt(), headerBg)
@@ -388,7 +388,7 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             if (cx < x + W - 12) ctx.fill(cx, searchY.toInt() + 2, cx + 1, searchY.toInt() + 13, 0xFFFFFFFF.toInt())
         }
 
-        val tabY = searchY + 20
+        val tabY = searchY + 28
         ctx.fill(x.toInt() + 4, tabY.toInt(), (x + W - 4).toInt(), (tabY + 20).toInt(), 0x18000000.toInt())
         for (i in cats.indices) {
             val tx = x + 8 + i * tabW
@@ -404,14 +404,14 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             ctx.drawString(f, tagStr, tx.toInt() + ((tabW - 2) - cw) / 2, tabY.toInt() + 4, if (sel) -1 else textGray)
         }
 
-        val divY = tabY + 22
+        val divY = tabY + 30
         ctx.fill(x.toInt() + 8, divY.toInt(), (x + W - 8).toInt(), (divY + 1).toInt(), 0x20FFFFFF.toInt())
 
         val mods = getMods()
         val listRight = x + W - panelW - 8
         val listY = divY + 6
         val listH = H - (listY - y) - 8
-        val rowH = 18
+        val rowH = 28
 
         tOff = max(0f, tOff.coerceAtMost(max(0f, mods.size * rowH - listH)))
         sOff += (tOff - sOff) * 0.3f * a
@@ -433,7 +433,8 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
 
             val isExpandedMod = expanded == mod
             val nameText = trimText(f, (if (isExpandedMod) "§n" else "") + mod.name, (listRight - x - 45).toInt())
-            ctx.drawString(f, nameText, x.toInt() + 14, mi + 3, if (mod.enabled) accent else textGray)
+            ctx.fill(x.toInt() + 8, mi, listRight.toInt(), mi + rowH - 2, if (mod.enabled) 0x304FE7FF else 0x18000000)
+            ctx.drawString(f, nameText, x.toInt() + 18, mi + 8, if (mod.enabled) accent else textGray)
 
             val switchW = 24
             val switchH = 12
@@ -632,11 +633,11 @@ class ClickGuiScreen : Screen(Component.literal("ClickGUI")) {
             }
         }
 
-        val divY = tabY + 22
+        val divY = tabY + 30
         val listY = divY + 6
         val listH = H - (listY - y) - 8
         val listRight = x + W - panelW - 8
-        val rowH = 18
+        val rowH = 28
 
         if (mx in (x + 8)..listRight && my in listY..(listY + listH)) {
             val mods = getMods()
